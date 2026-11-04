@@ -1,0 +1,270 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Usuarios ────────────────────────────────────────────────────────────────
+
+model User {
+  id                  String     @id @default(cuid())
+  name                String?
+  email               String     @unique
+  passwordHash        String?
+  image               String?
+  displayCurrency     String     @default("USD")
+  preferredRateSource RateSource @default(BCV)
+  createdAt           DateTime   @default(now())
+
+  wallets          Wallet[]
+  categories       Category[]
+  businesses       Business[]
+  transactions     Transaction[]
+  recurringExpense RecurringExpense[]
+  receivables      Receivable[]
+  debts            Debt[]
+}
+
+// ─── Catálogos ───────────────────────────────────────────────────────────────
+
+model Currency {
+  code     String @id // USD, VES, USDT…
+  name     String
+  symbol   String
+  decimals Int    @default(2)
+
+  wallets Wallet[]
+}
+
+enum WalletType {
+  BANK
+  PAYPAL
+  BINANCE
+  CASH
+  OTHER
+}
+
+model Wallet {
+  id             String     @id @default(cuid())
+  userId         String
+  name           String
+  type           WalletType @default(BANK)
+  currencyCode   String
+  initialBalance Decimal    @default(0) @db.Decimal(20, 8)
+  color          String     @default("#64748b")
+  archived       Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency     Currency      @relation(fields: [currencyCode], references: [code])
+  transactions Transaction[]
+  recurring    RecurringExpense[]
+
+  @@index([userId])
+}
+
+enum CategoryKind {
+  INCOME
+  EXPENSE
+}
+
+model Category {
+  id       String       @id @default(cuid())
+  userId   String
+  name     String
+  kind     CategoryKind
+  color    String       @default("#64748b")
+  archived Boolean      @default(false)
+
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  recurring    RecurringExpense[]
+
+  @@unique([userId, kind, name])
+}
+
+model Business {
+  id       String  @id @default(cuid())
+  userId   String
+  name     String
+  color    String  @default("#6366f1")
+  archived Boolean @default(false)
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  splits      TransactionSplit[]
+  recurring   RecurringExpense[]
+  receivables Receivable[]
+  debts       Debt[]
+
+  @@unique([userId, name])
+}
+
+// ─── Movimientos ─────────────────────────────────────────────────────────────
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER_OUT
+  TRANSFER_IN
+  LOAN_OUT
+  LOAN_REPAYMENT
+  LOAN_IN // préstamo recibido: entra dinero que debo
+  DEBT_PAYMENT // pago de un préstamo recibido: sale dinero, no es gasto
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+}
+
+enum RateSource {
+  BCV
+  BINANCE
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  userId          String
+  walletId        String
+  type            TransactionType
+  amount          Decimal         @db.Decimal(20, 8) // siempre positivo; el signo lo da `type`
+  date            DateTime        @db.Date
+  description     String          @default("")
+  categoryId      String?
+  transferGroupId String?
+  receivableId    String?
+  debtId          String?
+  recurringId     String?
+  // Snapshot de la tasa (VES por USD) al momento del movimiento
+  rateVesPerUsd   Decimal?        @db.Decimal(20, 8)
+  rateSource      RateSource?
+  createdAt       DateTime        @default(now())
+
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet     Wallet             @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  category   Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  receivable Receivable?        @relation(fields: [receivableId], references: [id], onDelete: SetNull)
+  debt       Debt?              @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  recurring  RecurringExpense?  @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  splits     TransactionSplit[]
+
+  @@index([userId, date])
+  @@index([walletId])
+  @@index([transferGroupId])
+  @@index([recurringId, date])
+}
+
+model TransactionSplit {
+  id            String  @id @default(cuid())
+  transactionId String
+  businessId    String? // null = Personal
+  amount        Decimal @db.Decimal(20, 8)
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  business    Business?   @relation(fields: [businessId], references: [id], onDelete: SetNull)
+
+  @@index([transactionId])
+  @@index([businessId])
+}
+
+// ─── Gastos fijos ────────────────────────────────────────────────────────────
+
+model RecurringExpense {
+  id           String    @id @default(cuid())
+  userId       String
+  name         String
+  amount       Decimal   @db.Decimal(20, 8)
+  currencyCode String
+  dayOfMonth   Int
+  walletId     String?
+  categoryId   String?
+  businessId   String?
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       Wallet?       @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  business     Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([userId])
+}
+
+// ─── Por cobrar / préstamos ──────────────────────────────────────────────────
+
+enum ReceivableKind {
+  RECEIVABLE
+  LOAN_GIVEN
+}
+
+enum ReceivableStatus {
+  PENDING
+  PARTIAL
+  SETTLED
+  CANCELLED
+}
+
+model Receivable {
+  id           String           @id @default(cuid())
+  userId       String
+  kind         ReceivableKind
+  counterparty String
+  description  String           @default("")
+  amount       Decimal          @db.Decimal(20, 8)
+  currencyCode String
+  expectedDate DateTime?        @db.Date
+  businessId   String?
+  status       ReceivableStatus @default(PENDING)
+  createdAt    DateTime         @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business     Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([userId, status])
+}
+
+// ─── Deudas (lo que yo debo) ─────────────────────────────────────────────────
+
+enum DebtKind {
+  PAYABLE // le debo a alguien (compra a crédito, factura pendiente…)
+  LOAN_RECEIVED // me prestaron dinero
+}
+
+model Debt {
+  id           String           @id @default(cuid())
+  userId       String
+  kind         DebtKind
+  counterparty String
+  description  String           @default("")
+  amount       Decimal          @db.Decimal(20, 8)
+  currencyCode String
+  dueDate      DateTime?        @db.Date
+  businessId   String?
+  status       ReceivableStatus @default(PENDING)
+  createdAt    DateTime         @default(now())
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business     Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  transactions Transaction[]
+
+  @@index([userId, status])
+}
+
+// ─── Tasas de cambio (global) ────────────────────────────────────────────────
+
+enum RateKind {
+  BCV
+  BINANCE_BUY
+  BINANCE_SELL
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  kind      RateKind
+  rate      Decimal  @db.Decimal(20, 8) // VES por 1 USD (o USDT)
+  fetchedAt DateTime @default(now())
+
+  @@index([kind, fetchedAt])
+}

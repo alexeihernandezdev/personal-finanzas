@@ -1,0 +1,126 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { prisma } from "@/lib/db";
+import { requireUser } from "@/lib/dal";
+import { fail, formObject, zodError, type ActionState } from "@/lib/action";
+import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { recomputeReceivableStatus } from "@/lib/receivables";
+import { parseISODate, todayISO } from "@/lib/utils";
+import { paymentSchema, receivableSchema } from "@/lib/validators";
+
+export async function createReceivable(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = receivableSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const d = parsed.data;
+  try {
+    await assertOwned(user.id, { walletIds: [d.walletId], businessIds: [d.businessId] });
+  } catch (e) {
+    if (e instanceof OwnershipError) return fail("Cuenta o negocio inválido");
+    throw e;
+  }
+
+  const rate = await snapshotRate(user.preferredRateSource);
+
+  if (d.kind === "LOAN_GIVEN") {
+    // Un préstamo saca el dinero de una cuenta: el préstamo se registra en la divisa de esa cuenta.
+    if (!d.walletId) return fail("Elige la cuenta de la que sale el dinero prestado");
+    const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: d.walletId } });
+    await prisma.receivable.create({
+      data: {
+        userId: user.id,
+        kind: "LOAN_GIVEN",
+        counterparty: d.counterparty,
+        description: d.description ?? "",
+        amount: d.amount,
+        currencyCode: wallet.currencyCode,
+        expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
+        businessId: d.businessId ?? null,
+        transactions: {
+          create: {
+            userId: user.id,
+            walletId: wallet.id,
+            type: "LOAN_OUT",
+            amount: d.amount,
+            date: parseISODate(d.date ?? todayISO()),
+            description: `Préstamo a ${d.counterparty}`,
+            ...rate,
+          },
+        },
+      },
+    });
+  } else {
+    await prisma.receivable.create({
+      data: {
+        userId: user.id,
+        kind: "RECEIVABLE",
+        counterparty: d.counterparty,
+        description: d.description ?? "",
+        amount: d.amount,
+        currencyCode: d.currencyCode,
+        expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
+        businessId: d.businessId ?? null,
+      },
+    });
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: d.kind === "LOAN_GIVEN" ? "Préstamo registrado" : "Cuenta por cobrar registrada" };
+}
+
+export async function registerPayment(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = paymentSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const d = parsed.data;
+  const [r, wallet] = await Promise.all([
+    prisma.receivable.findFirst({ where: { id: d.receivableId, userId: user.id } }),
+    prisma.wallet.findFirst({ where: { id: d.walletId, userId: user.id } }),
+  ]);
+  if (!r || !wallet) return fail("Registro no encontrado");
+  if (r.status === "CANCELLED" || r.status === "SETTLED") return fail("Este registro ya está cerrado");
+
+  const isLoan = r.kind === "LOAN_GIVEN";
+  await prisma.transaction.create({
+    data: {
+      userId: user.id,
+      walletId: wallet.id,
+      type: isLoan ? "LOAN_REPAYMENT" : "INCOME",
+      amount: d.amount,
+      date: parseISODate(d.date),
+      description: isLoan ? `Devolución de ${r.counterparty}` : `Cobro: ${r.counterparty}${r.description ? ` · ${r.description}` : ""}`,
+      receivableId: r.id,
+      ...(await snapshotRate(user.preferredRateSource)),
+      // Solo los ingresos cuentan para los negocios; la devolución de un préstamo no es ingreso
+      ...(isLoan ? {} : { splits: { create: [{ businessId: r.businessId, amount: d.amount }] } }),
+    },
+  });
+  await recomputeReceivableStatus(r.id);
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Cobro registrado" };
+}
+
+export async function cancelReceivable(id: string) {
+  const user = await requireUser();
+  const r = await prisma.receivable.findFirst({ where: { id, userId: user.id } });
+  if (!r) return;
+  if (r.status === "CANCELLED") {
+    await prisma.receivable.update({ where: { id }, data: { status: "PENDING" } });
+    await recomputeReceivableStatus(id);
+  } else {
+    await prisma.receivable.update({ where: { id }, data: { status: "CANCELLED" } });
+  }
+  revalidatePath("/", "layout");
+}
+
+export async function deleteReceivable(id: string) {
+  const user = await requireUser();
+  const r = await prisma.receivable.findFirst({ where: { id, userId: user.id } });
+  if (!r) return;
+  // Borra también la salida del préstamo y los cobros asociados, para no descuadrar saldos
+  await prisma.$transaction([
+    prisma.transaction.deleteMany({ where: { receivableId: id, userId: user.id } }),
+    prisma.receivable.delete({ where: { id } }),
+  ]);
+  revalidatePath("/", "layout");
+}
