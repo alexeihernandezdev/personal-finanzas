@@ -26,13 +26,22 @@ export function ActionForm({
 }) {
   const [state, formAction] = useActionState(action, null);
   const ref = useRef<HTMLFormElement>(null);
+  // Guardamos los callbacks en refs para que el efecto dependa solo de `state`:
+  // si dependiera de `onSuccess` (nueva función en cada render), cada tecla tras
+  // un guardado volvería a disparar el reset y el formulario quedaría bloqueado.
+  const onSuccessRef = useRef(onSuccess);
+  const resetRef = useRef(resetOnSuccess);
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+    resetRef.current = resetOnSuccess;
+  });
 
   useEffect(() => {
     if (state?.ok) {
-      if (resetOnSuccess) ref.current?.reset();
-      onSuccess?.();
+      if (resetRef.current) ref.current?.reset();
+      onSuccessRef.current?.();
     }
-  }, [state, resetOnSuccess, onSuccess]);
+  }, [state]);
 
   return (
     <form ref={ref} action={formAction} className={className}>
