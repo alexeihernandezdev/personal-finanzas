@@ -9,7 +9,7 @@ import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getDebts, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { cancelDebt, createDebt, deleteDebt, registerDebtPayment } from "./actions";
+import { cancelDebt, createDebt, deleteDebt, deleteDebtPayment, registerDebtPayment, updateDebtTransaction } from "./actions";
 
 const STATUS: Record<string, { label: string; className: string }> = {
   PENDING: { label: "Pendiente", className: "" },
@@ -117,8 +117,48 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                       <ul className="mt-3 space-y-0.5 text-xs text-muted">
                         {r.transactions.map((t) => (
                           <li key={t.id}>
-                            {formatDate(t.date)} · {t.type === "LOAN_IN" ? "Recibido en" : "Pagado desde"} {t.wallet.name}:{" "}
-                            {formatMoney(t.amount, t.wallet.currencyCode)}
+                            <details className="group">
+                              <summary className="cursor-pointer list-none hover:text-foreground">
+                                {formatDate(t.date)} · {t.type === "LOAN_IN" ? "Recibido en" : "Pagado desde"} {t.wallet.name}:{" "}
+                                {formatMoney(t.amount, t.wallet.currencyCode)}{" "}
+                                <span className="underline group-open:hidden">Editar</span>
+                              </summary>
+                              <div className="mt-2 mb-3 flex flex-wrap items-center gap-2">
+                                <ActionForm
+                                  action={updateDebtTransaction.bind(null, t.id)}
+                                  resetOnSuccess={false}
+                                  className="flex flex-wrap items-center gap-2"
+                                >
+                                  <Select name="walletId" className="h-8 w-40 text-xs" defaultValue={t.walletId}>
+                                    {!wallets.some((w) => w.id === t.walletId) && (
+                                      <option value={t.walletId}>
+                                        {t.wallet.name} ({t.wallet.currencyCode})
+                                      </option>
+                                    )}
+                                    {wallets.map((w) => (
+                                      <option key={w.id} value={w.id}>
+                                        {w.name} ({w.currencyCode})
+                                      </option>
+                                    ))}
+                                  </Select>
+                                  <Input name="amount" inputMode="decimal" defaultValue={t.amount.toFixed(2)} className="h-8 w-28 text-xs" />
+                                  <Input name="date" type="date" defaultValue={toISODate(t.date)} className="h-8 w-36 text-xs" />
+                                  <SubmitButton variant="secondary" className="h-8 text-xs">
+                                    Guardar
+                                  </SubmitButton>
+                                </ActionForm>
+                                {t.type !== "LOAN_IN" && (
+                                  <ConfirmButton
+                                    action={deleteDebtPayment.bind(null, t.id)}
+                                    confirm="¿Eliminar este pago? La deuda se reabrirá si queda saldo pendiente."
+                                    variant="ghost"
+                                    className="h-8 text-xs"
+                                  >
+                                    Eliminar pago
+                                  </ConfirmButton>
+                                )}
+                              </div>
+                            </details>
                           </li>
                         ))}
                       </ul>

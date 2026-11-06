@@ -7,7 +7,7 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { recomputeDebtStatus } from "@/lib/debts";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
 import { parseISODate, todayISO } from "@/lib/utils";
-import { debtPaymentSchema, debtSchema } from "@/lib/validators";
+import { debtPaymentSchema, debtSchema, debtTransactionEditSchema } from "@/lib/validators";
 
 export async function createDebt(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -120,5 +120,55 @@ export async function deleteDebt(id: string) {
     prisma.transaction.deleteMany({ where: { debtId: id, userId: user.id } }),
     prisma.debt.delete({ where: { id } }),
   ]);
+  revalidatePath("/", "layout");
+}
+
+/** Corrige un movimiento ligado a una deuda (pago o entrada del préstamo): cuenta, monto y fecha. */
+export async function updateDebtTransaction(txId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = debtTransactionEditSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const p = parsed.data;
+  const [tx, wallet] = await Promise.all([
+    prisma.transaction.findFirst({ where: { id: txId, userId: user.id, debtId: { not: null } }, include: { debt: true } }),
+    prisma.wallet.findFirst({ where: { id: p.walletId, userId: user.id } }),
+  ]);
+  if (!tx?.debt || !wallet) return fail("Registro no encontrado");
+
+  if (tx.type === "LOAN_IN") {
+    // La deuda del préstamo vive en la divisa de la cuenta que recibió el dinero
+    await prisma.$transaction([
+      prisma.transaction.update({
+        where: { id: tx.id },
+        data: { walletId: wallet.id, amount: p.amount, date: parseISODate(p.date) },
+      }),
+      prisma.debt.update({ where: { id: tx.debt.id }, data: { amount: p.amount, currencyCode: wallet.currencyCode } }),
+    ]);
+  } else {
+    await prisma.$transaction([
+      prisma.transactionSplit.deleteMany({ where: { transactionId: tx.id } }),
+      prisma.transaction.update({
+        where: { id: tx.id },
+        data: {
+          walletId: wallet.id,
+          amount: p.amount,
+          date: parseISODate(p.date),
+          ...(tx.type === "EXPENSE" ? { splits: { create: [{ businessId: tx.debt.businessId, amount: p.amount }] } } : {}),
+        },
+      }),
+    ]);
+  }
+  await recomputeDebtStatus(tx.debt.id);
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Movimiento actualizado" };
+}
+
+/** Elimina un pago de una deuda y la reabre si corresponde. */
+export async function deleteDebtPayment(txId: string) {
+  const user = await requireUser();
+  const tx = await prisma.transaction.findFirst({ where: { id: txId, userId: user.id, debtId: { not: null } } });
+  if (!tx || tx.type === "LOAN_IN") return;
+  await prisma.transaction.delete({ where: { id: tx.id } });
+  await recomputeDebtStatus(tx.debtId!);
   revalidatePath("/", "layout");
 }

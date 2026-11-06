@@ -139,3 +139,9 @@ export const debtPaymentSchema = z.object({
   amount: amount(),
   date: isoDate,
 });
+
+export const debtTransactionEditSchema = z.object({
+  walletId: z.string({ error: "Elige una cuenta" }),
+  amount: amount(),
+  date: isoDate,
+});
