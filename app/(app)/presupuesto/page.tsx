@@ -7,7 +7,7 @@ import { Card, EmptyState, Field, Input, PageHeader, SectionTitle } from "@/comp
 import { formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { Decimal, formatMoney } from "@/lib/money";
-import { getBudgetOverview, getPockets, getRecentIncomes } from "@/lib/queries";
+import { getBudgetOverview, getBusinesses, getPockets, getRecentIncomes } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate } from "@/lib/utils";
 import { createBudgetBucket, createSuggestedBuckets, moveBudgetBucket } from "./actions";
@@ -15,30 +15,68 @@ import { DistributeIncomeButton } from "./distribute-income";
 import { EditBucketButton, EditBufferButton, PocketSelect, type PocketOption } from "./edit-dialogs";
 
 async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto">) {
-  const { repartir } = await searchParams;
+  const { repartir, negocio } = await searchParams;
   const user = await requireUser();
-  const rates = await getCurrentRates();
+  const [rates, businesses] = await Promise.all([getCurrentRates(), getBusinesses(user.id)]);
   const rate = pickRate(rates, user.preferredRateSource);
+  // Un presupuesto por dueño del dinero: Personal y cada negocio
+  const tabs = [{ key: "personal", name: "Personal" }, ...businesses.map((b) => ({ key: b.id, name: b.name }))];
+  const currentTab = tabs.find((t) => t.key === negocio) ?? tabs[0];
+  const businessId = currentTab.key === "personal" ? null : currentTab.key;
   const [budget, pockets, incomes] = await Promise.all([
-    getBudgetOverview(user.id, user.displayCurrency, rate),
+    getBudgetOverview(user.id, user.displayCurrency, rate, businessId),
     getPockets(user.id),
-    getRecentIncomes(user.id),
+    getRecentIncomes(user.id, { businessId }),
   ]);
-  const pocketOptions: PocketOption[] = pockets
-    .filter((p) => !p.archived)
-    .map((p) => ({ id: p.id, name: p.name, currencyCode: p.currencyCode }));
-  const pocketById = new Map(pockets.filter((p) => !p.archived).map((p) => [p.id, p]));
+  const active = pockets.filter((p) => !p.archived);
+  const pocketOptions: PocketOption[] = [
+    ...active.filter((p) => !p.businessId),
+    ...active.filter((p) => p.businessId),
+  ].map((p) => ({
+    id: p.id,
+    name: p.name,
+    currencyCode: p.currencyCode,
+    ownerName: p.business?.name ?? "Personal",
+    isMain: p.isMain,
+  }));
+  const pocketById = new Map(active.map((p) => [p.id, p]));
+  const caja = active.find((p) => p.isMain && p.businessId === businessId);
   const cur = user.displayCurrency;
   const noIncome = budget.income.isZero();
+  const ownerLabel = businessId ? currentTab.name : "tus ingresos personales";
 
   return (
     <>
-      <PageHeader title="Presupuesto" description="Cómo se reparten tus ingresos fijos cada mes" />
+      <PageHeader
+        title="Presupuesto"
+        description="Cómo se reparte el dinero de cada dueño: Personal y cada negocio"
+      />
+      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Dueño del presupuesto">
+        {tabs.map((t) => (
+          <Link
+            key={t.key}
+            href={`/presupuesto?negocio=${t.key}`}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-sm",
+              currentTab.key === t.key ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+            )}
+          >
+            {t.name}
+          </Link>
+        ))}
+      </nav>
+      <p className="mb-6 rounded-lg bg-background px-4 py-3 text-sm text-muted">
+        Cuando entra dinero a{" "}
+        <span className="font-medium text-foreground">{caja?.name ?? `la Caja ${currentTab.name}`}</span>, cada
+        partida con apartado se lleva su porcentaje automáticamente. Lo demás (gastos fijos, colchón y libre) se queda
+        en la Caja.
+        {businessId && " Para pasarte un sueldo, crea una partida que vaya a la Caja Personal."}
+      </p>
 
       {noIncome && (
         <div className="mb-6">
           <EmptyState>
-            Registra tus ingresos fijos para ver qué porcentaje se llevan tus gastos fijos y cuánto destinas a cada
+            Registra los ingresos fijos de {ownerLabel} para ver qué porcentaje se llevan tus gastos fijos y cuánto destinas a cada
             partida.{" "}
             <Link href="/ingresos-fijos" className="text-accent hover:underline">
               Agregar ingresos fijos
@@ -168,9 +206,10 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
             <Card className="h-fit">
               <h2 className="mb-1 font-semibold">Repartir un ingreso</h2>
               <p className="mb-4 text-xs text-muted">
-                Elige un ingreso y aparta la parte de cada partida en su apartado. El dinero se queda en tus cuentas.
+                Para ingresos que no entraron a la Caja: aparta a mano la parte de cada partida. El dinero se queda en tus cuentas.
               </p>
               <DistributeIncomeButton
+                businessId={businessId ?? ""}
                 initialIncomeId={typeof repartir === "string" ? repartir : undefined}
                 incomes={incomes.map((i) => ({
                   id: i.id,
@@ -199,7 +238,8 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
               Un porcentaje de tus ingresos fijos para diversión, ahorro, inversión, viajes…
               {!noIncome && budget.freePercent.gt(0) && <> Te queda {formatPercent(budget.freePercent)} libre.</>}
             </p>
-            <ActionForm action={createBudgetBucket} className="flex flex-col gap-3">
+            <ActionForm key={currentTab.key} action={createBudgetBucket} className="flex flex-col gap-3">
+              <input type="hidden" name="businessId" value={businessId ?? ""} />
               <Field label="Nombre">
                 <Input name="name" required placeholder="Ej. Diversión, Ahorro, Inversión…" />
               </Field>
@@ -221,7 +261,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                 ¿No sabes por dónde empezar? Prueba con{" "}
                 {SUGGESTED_BUCKETS.map((b) => `${b.name} ${b.percent}%`).join(", ")} y ajústalo a tu medida.
               </p>
-              <ConfirmButton action={createSuggestedBuckets} variant="secondary" className="w-full">
+              <ConfirmButton action={createSuggestedBuckets.bind(null, businessId)} variant="secondary" className="w-full">
                 Usar sugerencia
               </ConfirmButton>
             </Card>

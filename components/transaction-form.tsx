@@ -11,11 +11,26 @@ import { cn } from "@/lib/utils";
 import { normalizeAmount } from "@/lib/validators";
 
 type Option = { id: string; name: string };
+
+/** Apartado elegible al registrar un movimiento. `rules`: reparto automático si es una Caja. */
+export type PocketChoice = {
+  id: string;
+  name: string;
+  currencyCode: string;
+  isMain: boolean;
+  businessId: string | null;
+  ownerName: string;
+  rules: { name: string; percent: string; target: string }[];
+};
+
+const AUTO_POCKET = "auto";
+
 type Props = {
   action: (prev: ActionState, formData: FormData) => Promise<ActionState>;
   wallets: (Option & { currencyCode: string })[];
   categories: (Option & { kind: "INCOME" | "EXPENSE" })[];
   businesses: (Option & { color: string })[];
+  pockets?: PocketChoice[];
   today: string;
   rates?: RatesDTO;
   rateSource?: "BCV" | "BINANCE";
@@ -27,6 +42,8 @@ type Props = {
     categoryId: string | null;
     description: string;
     splits: { businessId: string | null; amount: string }[];
+    pocketId: string;
+    distribute: boolean;
   };
   defaultWalletId?: string;
   submitLabel?: string;
@@ -40,6 +57,7 @@ export function TransactionForm({
   wallets,
   categories,
   businesses,
+  pockets = [],
   today,
   rates,
   rateSource,
@@ -55,6 +73,7 @@ export function TransactionForm({
   const [splitOn, setSplitOn] = useState(hasRealSplits);
   const [calcOn, setCalcOn] = useState(false);
   const [mode, setMode] = useState<"percent" | "amount">(hasRealSplits ? "amount" : "percent");
+  const [pocketId, setPocketId] = useState(defaults?.pocketId ?? AUTO_POCKET);
   const [rows, setRows] = useState<Row[]>(
     hasRealSplits
       ? (defaults?.splits ?? []).map((s) => ({ businessId: s.businessId ?? PERSONAL, value: s.amount }))
@@ -82,10 +101,32 @@ export function TransactionForm({
 
   const filteredCategories = categories.filter((c) => c.kind === type);
 
+  // Dueños del movimiento: cada parte de la división, o Personal si no se divide
+  const ownerIds = splitOn ? [...new Set(rows.map((r) => r.businessId || null))] : [null];
+  const ownerTotal = (ownerId: string | null) =>
+    splitOn
+      ? rows.reduce((acc, r, i) => ((r.businessId || null) === ownerId ? acc.add(computed.amounts[i] ?? 0) : acc), new Decimal(0))
+      : total;
+  const cajaOf = (ownerId: string | null) => pockets.find((p) => p.isMain && p.businessId === ownerId);
+  const ownerName = (ownerId: string | null) => businesses.find((b) => b.id === ownerId)?.name ?? "Personal";
+  // Cajas que recibirán dinero (y se repartirán) con la selección actual
+  const receivers: { name: string; amount: Decimal; rules: PocketChoice["rules"] }[] =
+    pocketId === AUTO_POCKET
+      ? ownerIds.map((id) => ({
+          name: cajaOf(id)?.name ?? `Caja ${ownerName(id)} (se crea)`,
+          amount: ownerTotal(id),
+          rules: cajaOf(id)?.rules ?? [],
+        }))
+      : pockets
+          .filter((p) => p.id === pocketId && p.isMain)
+          .map((p) => ({ name: p.name, amount: total, rules: p.rules }));
+  const owners = [...new Set(pockets.map((p) => p.ownerName))];
+
   const resetAll = () => {
     if (defaults) return;
     setAmount("");
     setSplitOn(false);
+    setPocketId(AUTO_POCKET);
   };
 
   return (
@@ -252,6 +293,60 @@ export function TransactionForm({
               <p className="text-xs text-muted">Crea tus negocios en la sección Negocios para poder asignarlos.</p>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="col-span-full flex flex-col gap-2 rounded-lg border border-border p-3">
+        <Field label={type === "INCOME" ? "Va al apartado" : "Sale del apartado"}>
+          <Select name="pocketId" value={pocketId} onChange={(e) => setPocketId(e.target.value)}>
+            <option value={AUTO_POCKET}>
+              {splitOn ? "La Caja de cada dueño" : `Caja ${ownerName(null)}`} (automático)
+            </option>
+            <option value="">Ninguno: dinero sin asignar</option>
+            {owners.map((owner) => (
+              <optgroup key={owner} label={owner}>
+                {pockets
+                  .filter((p) => p.ownerName === owner)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} · {p.currencyCode}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </Select>
+        </Field>
+        {type === "EXPENSE" && pocketId === AUTO_POCKET && (
+          <p className="text-xs text-muted">Sale de la Caja de su dueño, si ya la tiene.</p>
+        )}
+        {type === "INCOME" && receivers.length > 0 && (
+          <>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="distribute"
+                defaultChecked={defaults?.distribute ?? true}
+                key={defaults ? "edit" : "new"}
+              />
+              Repartir según el presupuesto
+            </label>
+            <ul className="flex flex-col gap-1 text-xs text-muted">
+              {receivers.map((r) => (
+                <li key={r.name}>
+                  <span className="font-medium text-foreground">{r.name}</span>
+                  {r.rules.length === 0
+                    ? " · sin partidas: todo se queda en la Caja"
+                    : r.rules.map((rule) => (
+                        <span key={rule.name} className="block pl-3">
+                          {rule.name} {rule.percent}% → {rule.target}
+                          {r.amount.gt(0) &&
+                            ` · ${formatMoney(r.amount.mul(rule.percent).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN), currency)}`}
+                        </span>
+                      ))}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
 

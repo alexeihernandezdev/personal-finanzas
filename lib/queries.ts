@@ -76,6 +76,40 @@ export async function getMoneySummary(userId: string, currency: string, vesPerUs
 
 export type PocketWithBalance = Awaited<ReturnType<typeof getPockets>>[number];
 
+/**
+ * Apartados activos para elegir al registrar un movimiento o un traspaso, con el nombre de su dueño
+ * y, si son Cajas, las partidas con las que se reparte lo que les entra.
+ */
+export async function getPocketChoices(userId: string) {
+  const [pockets, buckets] = await Promise.all([
+    prisma.pocket.findMany({
+      where: { userId, archived: false },
+      include: { business: { select: { name: true } } },
+      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }],
+    }),
+    prisma.budgetBucket.findMany({
+      where: { userId, pocket: { archived: false } },
+      include: { pocket: { select: { name: true } } },
+      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+    }),
+  ]);
+  return pockets
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      currencyCode: p.currencyCode,
+      isMain: p.isMain,
+      businessId: p.businessId,
+      ownerName: p.business?.name ?? "Personal",
+      rules: p.isMain
+        ? buckets
+            .filter((b) => b.businessId === p.businessId && b.pocket && b.pocketId !== p.id)
+            .map((b) => ({ name: b.name, percent: b.percent.toString(), target: b.pocket!.name }))
+        : [],
+    }))
+    .sort((a, b) => Number(a.businessId !== null) - Number(b.businessId !== null));
+}
+
 export type WalletWithBalance = Awaited<ReturnType<typeof getWalletsWithBalance>>[number];
 
 export async function getWallet(userId: string, id: string) {
@@ -268,30 +302,40 @@ export function getRecurringIncome(userId: string) {
   });
 }
 
-export function getBudgetBuckets(userId: string) {
-  return prisma.budgetBucket.findMany({ where: { userId }, orderBy: [{ position: "asc" }, { createdAt: "asc" }] });
+/** Partidas del presupuesto de un dueño (`businessId` null = Personal). */
+export function getBudgetBuckets(userId: string, businessId: string | null = null) {
+  return prisma.budgetBucket.findMany({ where: { userId, businessId }, orderBy: [{ position: "asc" }, { createdAt: "asc" }] });
 }
 
 /** Últimos ingresos, para repartirlos entre los apartados del presupuesto. `distributed`: ya se repartió algo. */
-export async function getRecentIncomes(userId: string, take = 30) {
+export async function getRecentIncomes(userId: string, opts: { businessId?: string | null; take?: number } = {}) {
   const items = await prisma.transaction.findMany({
-    where: { userId, type: "INCOME" },
+    where: {
+      userId,
+      type: "INCOME",
+      ...(opts.businessId !== undefined ? { splits: { some: { businessId: opts.businessId } } } : {}),
+    },
     include: { wallet: { select: { name: true, currencyCode: true } }, _count: { select: { pocketMovements: true } } },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    take,
+    take: opts.take ?? 30,
   });
   return items.map(({ _count, ...t }) => ({ ...t, distributed: _count.pocketMovements > 0 }));
 }
 
 /**
- * Presupuesto mensual en la divisa del usuario: ingresos fijos activos, gastos fijos activos (más
- * su colchón) y partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
+ * Presupuesto mensual de un dueño (Personal o un negocio) en la divisa del usuario: sus ingresos fijos
+ * activos, sus gastos fijos activos (más el colchón) y sus partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
  */
-export async function getBudgetOverview(userId: string, displayCurrency: string, rate: Decimal | null) {
+export async function getBudgetOverview(
+  userId: string,
+  displayCurrency: string,
+  rate: Decimal | null,
+  businessId: string | null = null,
+) {
   const [incomes, expenses, buckets, settings] = await Promise.all([
-    prisma.recurringIncome.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
-    prisma.recurringExpense.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
-    getBudgetBuckets(userId),
+    prisma.recurringIncome.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
+    prisma.recurringExpense.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
+    getBudgetBuckets(userId, businessId),
     prisma.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } }),
   ]);
   const sum = (list: { amount: Prisma.Decimal; currencyCode: string }[]) =>

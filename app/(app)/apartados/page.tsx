@@ -3,13 +3,23 @@ import Link from "next/link";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { PocketFields, pocketKindLabel } from "@/components/pocket-fields";
+import { PocketTransferForm, type TransferDestination } from "@/components/pocket-transfer-form";
 import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, SectionTitle, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getMoneySummary, getPockets, type PocketWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { createPocket, deletePocket, deletePocketMovement, movePocketMoney, toggleArchivePocket, updatePocket } from "./actions";
+import {
+  createMainPocket,
+  createPocket,
+  deletePocket,
+  deletePocketMovement,
+  movePocketMoney,
+  toggleArchivePocket,
+  transferPocketMoney,
+  updatePocket,
+} from "./actions";
 
 type BusinessOption = { id: string; name: string };
 
@@ -45,8 +55,21 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
     }, new Decimal(0));
 
   const inTab = tabPockets(currentTab.key);
-  const active = inTab.filter((p) => !p.archived);
+  // La Caja va primero
+  const active = inTab.filter((p) => !p.archived).sort((a, b) => Number(b.isMain) - Number(a.isMain));
   const archived = inTab.filter((p) => p.archived);
+  const hasCaja = inTab.some((p) => p.isMain);
+  const tabBusinessId = currentTab.key === "personal" ? null : currentTab.key;
+  const destinations: TransferDestination[] = [
+    ...pockets.filter((p) => !p.archived && !p.businessId),
+    ...pockets.filter((p) => !p.archived && p.businessId),
+  ].map((p) => ({
+    id: p.id,
+    name: p.name,
+    currencyCode: p.currencyCode,
+    ownerName: p.business?.name ?? "Personal",
+    isMain: p.isMain,
+  }));
 
   return (
     <>
@@ -89,6 +112,18 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
               </Link>
             ))}
           </nav>
+          {!hasCaja && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border p-4 text-sm">
+              <p className="text-muted">
+                La <span className="font-medium text-foreground">Caja {currentTab.name}</span> recibe los ingresos de{" "}
+                {tabBusinessId ? "este negocio" : "lo personal"} y los reparte según su presupuesto. Se crea sola con el
+                primer ingreso.
+              </p>
+              <ConfirmButton action={createMainPocket.bind(null, tabBusinessId)} variant="secondary" className="h-8 text-xs">
+                Crear Caja ahora
+              </ConfirmButton>
+            </div>
+          )}
           {active.length === 0 ? (
             <EmptyState>
               {currentTab.key === "personal"
@@ -101,7 +136,12 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
               <SectionTitle>{currentTab.name}</SectionTitle>
               <div className="flex flex-col gap-3">
                 {active.map((p) => (
-                  <PocketCard key={p.id} pocket={p} businesses={businessOptions} />
+                  <PocketCard
+                    key={p.id}
+                    pocket={p}
+                    businesses={businessOptions}
+                    destinations={destinations.filter((d) => d.id !== p.id)}
+                  />
                 ))}
               </div>
             </section>
@@ -111,7 +151,7 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
               <SectionTitle>Archivados</SectionTitle>
               <div className="flex flex-col gap-3 opacity-70">
                 {archived.map((p) => (
-                  <PocketCard key={p.id} pocket={p} businesses={businessOptions} />
+                  <PocketCard key={p.id} pocket={p} businesses={businessOptions} destinations={[]} />
                 ))}
               </div>
             </section>
@@ -138,9 +178,11 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
 function PocketCard({
   pocket: p,
   businesses,
+  destinations,
 }: {
   pocket: PocketWithBalance;
   businesses: BusinessOption[];
+  destinations: TransferDestination[];
 }) {
   const currency = p.currencyCode;
   const target = p.targetAmount ? new Decimal(p.targetAmount.toString()) : null;
@@ -152,9 +194,12 @@ function PocketCard({
       <span className="absolute inset-y-0 left-0 w-1" style={{ background: p.color }} />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="font-medium">{p.name}</p>
+          <p className="flex items-center gap-2 font-medium">
+            {p.name}
+            {p.isMain && <Badge className="bg-accent-soft text-accent">Caja</Badge>}
+          </p>
           <p className="text-xs text-muted">
-            {pocketKindLabel(p.kind)} · {currency}
+            {p.isMain ? "Recibe los ingresos y los reparte según el presupuesto" : pocketKindLabel(p.kind)} · {currency}
             {p.targetDate && ` · para el ${formatDate(p.targetDate)}`}
           </p>
         </div>
@@ -191,6 +236,27 @@ function PocketCard({
         </ActionForm>
       )}
 
+      {!p.archived && destinations.length > 0 && p.balance.gt(0) && (
+        <details className="mt-3 text-xs">
+          <summary className="cursor-pointer text-muted hover:text-foreground">Pasar a otro apartado</summary>
+          <div className="mt-3 text-sm">
+            <PocketTransferForm
+              action={transferPocketMoney}
+              pocket={{ id: p.id, currencyCode: currency, balance: p.balance.toString() }}
+              entries={p.movements
+                .filter((m) => m.amount.gt(0))
+                .map((m) => ({
+                  id: m.id,
+                  label: `${formatDate(m.date, { day: "2-digit", month: "short" })} · ${m.description || "Entrada"}`,
+                  amount: m.amount.toString(),
+                }))}
+              destinations={destinations}
+              today={today}
+            />
+          </div>
+        </details>
+      )}
+
       {p.movements.length > 0 && (
         <details className="mt-3 text-xs">
           <summary className="cursor-pointer text-muted hover:text-foreground">Últimos movimientos</summary>
@@ -202,7 +268,11 @@ function PocketCard({
                 <Amount value={formatMoney(m.amount.toString(), currency, { sign: true })} />
                 <ConfirmButton
                   action={deletePocketMovement.bind(null, m.id)}
-                  confirm="¿Eliminar este movimiento del apartado?"
+                  confirm={
+                    m.groupId
+                      ? "Se eliminará la operación completa (el traspaso o reparto en todos sus apartados). ¿Continuar?"
+                      : "¿Eliminar este movimiento del apartado?"
+                  }
                   variant="ghost"
                   className="h-7 px-2 text-xs"
                 >
@@ -221,6 +291,7 @@ function PocketCard({
             <PocketFields
               businesses={businesses}
               currencyLocked={!p.balance.isZero()}
+              ownerLocked={p.isMain}
               defaults={{
                 name: p.name,
                 kind: p.kind,
@@ -234,18 +305,20 @@ function PocketCard({
             <SubmitButton className="sm:col-span-2">Guardar cambios</SubmitButton>
           </ActionForm>
           <div className="flex flex-wrap gap-2">
-            {(p.archived || p.balance.isZero()) && (
+            {!p.isMain && (p.archived || p.balance.isZero()) && (
               <ConfirmButton action={toggleArchivePocket.bind(null, p.id)} variant="secondary" className="h-8 text-xs">
                 {p.archived ? "Restaurar" : "Archivar"}
               </ConfirmButton>
             )}
-            <ConfirmButton
-              action={deletePocket.bind(null, p.id)}
-              confirm="¿Eliminar el apartado? Su dinero vuelve a estar disponible."
-              className="h-8 text-xs"
-            >
-              Eliminar apartado
-            </ConfirmButton>
+            {(!p.isMain || p.balance.isZero()) && (
+              <ConfirmButton
+                action={deletePocket.bind(null, p.id)}
+                confirm="¿Eliminar el apartado? Su dinero vuelve a estar disponible."
+                className="h-8 text-xs"
+              >
+                Eliminar apartado
+              </ConfirmButton>
+            )}
           </div>
         </div>
       </details>

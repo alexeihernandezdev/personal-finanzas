@@ -30,18 +30,29 @@ function PercentInput({ defaultValue, required }: { defaultValue: string; requir
   );
 }
 
-export type PocketOption = { id: string; name: string; currencyCode: string };
+export type PocketOption = { id: string; name: string; currencyCode: string; ownerName: string; isMain: boolean };
 
-/** Apartado al que va el dinero de la partida cuando se reparte un ingreso. */
+/**
+ * Apartado al que va el dinero de la partida cuando entra dinero a la Caja. Puede ser la Caja de otro
+ * dueño (p. ej. "Sueldo → Caja Personal"): ahí se vuelve a repartir con su propio presupuesto.
+ */
 export function PocketSelect({ pockets, defaultValue }: { pockets: PocketOption[]; defaultValue?: string | null }) {
+  const owners = [...new Set(pockets.map((p) => p.ownerName))];
   return (
-    <Field label="Apartado" hint="A dónde va su parte cuando repartes un ingreso">
+    <Field label="Apartado" hint="A dónde va su parte cuando entra dinero">
       <Select name="pocketId" defaultValue={defaultValue ?? ""}>
         <option value="">Sin apartado</option>
-        {pockets.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name} · {p.currencyCode}
-          </option>
+        {owners.map((owner) => (
+          <optgroup key={owner} label={owner}>
+            {pockets
+              .filter((p) => p.ownerName === owner)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.currencyCode}
+                  {p.isMain ? " (se reparte con su presupuesto)" : ""}
+                </option>
+              ))}
+          </optgroup>
         ))}
       </Select>
     </Field>

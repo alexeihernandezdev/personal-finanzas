@@ -17,6 +17,7 @@ export function PocketFields({
   defaults,
   defaultBusinessId,
   currencyLocked,
+  ownerLocked,
 }: {
   businesses: { id: string; name: string }[];
   // Negocio preseleccionado al crear ("" = Personal)
@@ -32,6 +33,8 @@ export function PocketFields({
   };
   // Con dinero apartado no se puede cambiar la divisa
   currencyLocked?: boolean;
+  // La Caja siempre es del mismo dueño
+  ownerLocked?: boolean;
 }) {
   return (
     <>
@@ -47,8 +50,8 @@ export function PocketFields({
           ))}
         </Select>
       </Field>
-      <Field label="Para" hint="Separa el dinero personal del de cada negocio">
-        <Select name="businessId" defaultValue={defaults?.businessId ?? defaultBusinessId ?? ""}>
+      <Field label="Para" hint={ownerLocked ? "La Caja no cambia de dueño" : "Separa el dinero personal del de cada negocio"}>
+        <Select name="businessId" defaultValue={defaults?.businessId ?? defaultBusinessId ?? ""} disabled={ownerLocked}>
           <option value="">Personal</option>
           {businesses.map((b) => (
             <option key={b.id} value={b.id}>

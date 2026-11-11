@@ -29,10 +29,13 @@ export function DistributeIncomeButton({
   incomes,
   buckets,
   initialIncomeId,
+  businessId,
 }: {
   incomes: IncomeOption[];
   buckets: DistributableBucket[];
   initialIncomeId?: string;
+  /** Dueño del presupuesto (vacío = Personal) */
+  businessId: string;
 }) {
   const initial = incomes.find((i) => i.id === initialIncomeId);
   const [open, setOpen] = useState(Boolean(initial));
@@ -49,6 +52,7 @@ export function DistributeIncomeButton({
       </Button>
       <Modal open={open} onClose={close} title="Repartir un ingreso">
         <ActionForm action={distributeIncome} onSuccess={close} className="flex flex-col gap-4">
+          <input type="hidden" name="businessId" value={businessId} />
           <Field label="Ingreso">
             <Select name="incomeId" value={incomeId} onChange={(e) => setIncomeId(e.target.value)} required>
               {incomes.map((i) => (

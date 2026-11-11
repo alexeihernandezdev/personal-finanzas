@@ -78,6 +78,13 @@ export const transactionSchema = z.object({
   categoryId: optionalId,
   description: z.string().max(200).optional(),
   splits: z.array(splitSchema).default([]),
+  // Apartado al que entra / del que sale: "auto" = Caja de cada dueño, vacío = ninguno
+  pocketId: optionalId,
+  // Repartir según el presupuesto lo que entra a una Caja
+  distribute: z
+    .string()
+    .optional()
+    .transform((v) => v === "on"),
 });
 
 export const transferSchema = z.object({
@@ -213,3 +220,24 @@ export const pocketMovementSchema = z.object({
   date: isoDate,
   description: z.string().max(200).optional(),
 });
+
+export const pocketTransferSchema = z
+  .object({
+    fromPocketId: z.string(),
+    toPocketId: z.string({ error: "Elige a qué apartado pasa" }).min(1, "Elige a qué apartado pasa"),
+    mode: z.enum(["amount", "percent"]),
+    // "balance" = % sobre el saldo; si no, id del movimiento de entrada sobre el que se calcula
+    base: z.string().default("balance"),
+    value: amount("El valor"),
+    date: isoDate,
+    description: z.string().max(200).optional(),
+    distribute: z
+      .string()
+      .optional()
+      .transform((v) => v === "on"),
+  })
+  .refine((d) => d.mode === "amount" || Number(d.value) <= 100, {
+    message: "El porcentaje debe estar entre 0 y 100",
+    path: ["value"],
+  })
+  .refine((d) => d.fromPocketId !== d.toPocketId, { message: "Elige otro apartado", path: ["toPocketId"] });

@@ -5,11 +5,24 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { SUGGESTED_BUCKETS } from "@/lib/budget";
-import { snapshotRate } from "@/lib/guards";
+import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
 import { convert, dec, Decimal, formatMoney } from "@/lib/money";
 import { getMoneySummary } from "@/lib/queries";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { budgetBucketSchema, fixedBufferSchema, normalizeAmount } from "@/lib/validators";
+
+/** Dueño del presupuesto que llega en el formulario: un negocio del usuario o null (Personal). */
+async function ownerFrom(userId: string, formData: FormData) {
+  const raw = formData.get("businessId");
+  const businessId = typeof raw === "string" && raw ? raw : null;
+  try {
+    await assertOwned(userId, { businessIds: [businessId] });
+  } catch (e) {
+    if (e instanceof OwnershipError) return undefined;
+    throw e;
+  }
+  return businessId;
+}
 
 /** El apartado elegido debe ser del usuario y estar activo. */
 async function ownsPocket(userId: string, pocketId: string | undefined) {
@@ -22,9 +35,11 @@ export async function createBudgetBucket(_prev: ActionState, formData: FormData)
   const parsed = budgetBucketSchema.safeParse(formObject(formData));
   if (!parsed.success) return zodError(parsed.error);
   if (!(await ownsPocket(user.id, parsed.data.pocketId))) return fail("Apartado no encontrado");
-  const last = await prisma.budgetBucket.aggregate({ where: { userId: user.id }, _max: { position: true } });
+  const businessId = await ownerFrom(user.id, formData);
+  if (businessId === undefined) return fail("Negocio inválido");
+  const last = await prisma.budgetBucket.aggregate({ where: { userId: user.id, businessId }, _max: { position: true } });
   const position = (last._max.position ?? -1) + 1;
-  await prisma.budgetBucket.create({ data: { userId: user.id, ...parsed.data, position } });
+  await prisma.budgetBucket.create({ data: { userId: user.id, businessId, ...parsed.data, position } });
   revalidatePath("/", "layout");
   return { ok: true, message: "Partida creada" };
 }
@@ -49,11 +64,13 @@ export async function deleteBudgetBucket(id: string) {
   revalidatePath("/", "layout");
 }
 
-/** Sube o baja una partida un lugar; renumera todas para que las posiciones queden consecutivas. */
+/** Sube o baja una partida un lugar dentro de su presupuesto; renumera para que queden consecutivas. */
 export async function moveBudgetBucket(id: string, direction: "up" | "down") {
   const user = await requireUser();
+  const bucket = await prisma.budgetBucket.findFirst({ where: { id, userId: user.id }, select: { businessId: true } });
+  if (!bucket) return;
   const buckets = await prisma.budgetBucket.findMany({
-    where: { userId: user.id },
+    where: { userId: user.id, businessId: bucket.businessId },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
     select: { id: true },
   });
@@ -67,11 +84,19 @@ export async function moveBudgetBucket(id: string, direction: "up" | "down") {
   revalidatePath("/", "layout");
 }
 
-/** Crea las partidas sugeridas (solo si aún no hay ninguna). */
-export async function createSuggestedBuckets() {
+/** Crea las partidas sugeridas en el presupuesto de un dueño (solo si aún no tiene ninguna). */
+export async function createSuggestedBuckets(businessId: string | null) {
   const user = await requireUser();
-  if (await prisma.budgetBucket.count({ where: { userId: user.id } })) return;
-  await prisma.budgetBucket.createMany({ data: SUGGESTED_BUCKETS.map((b, position) => ({ userId: user.id, ...b, position })) });
+  try {
+    await assertOwned(user.id, { businessIds: [businessId] });
+  } catch (e) {
+    if (e instanceof OwnershipError) return;
+    throw e;
+  }
+  if (await prisma.budgetBucket.count({ where: { userId: user.id, businessId } })) return;
+  await prisma.budgetBucket.createMany({
+    data: SUGGESTED_BUCKETS.map((b, position) => ({ userId: user.id, businessId, ...b, position })),
+  });
   revalidatePath("/", "layout");
 }
 
@@ -99,8 +124,10 @@ export async function distributeIncome(_prev: ActionState, formData: FormData): 
   });
   if (!income) return fail("Ingreso no encontrado");
 
+  const businessId = await ownerFrom(user.id, formData);
+  if (businessId === undefined) return fail("Negocio inválido");
   const buckets = await prisma.budgetBucket.findMany({
-    where: { userId: user.id, pocket: { archived: false } },
+    where: { userId: user.id, businessId, pocket: { archived: false } },
     include: { pocket: true },
   });
   const lines: { name: string; pocketId: string; currency: string; amount: Decimal }[] = [];

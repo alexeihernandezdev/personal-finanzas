@@ -111,6 +111,7 @@ model Business {
   receivables     Receivable[]
   debts           Debt[]
   pockets         Pocket[]
+  budgetBuckets   BudgetBucket[]
 
   @@unique([userId, name])
 }
@@ -256,13 +257,17 @@ model BudgetBucket {
   color     String   @default("#6366f1")
   position  Int      @default(0)
   // Apartado al que va su porcentaje cuando se reparte un ingreso
-  pocketId  String?
-  createdAt DateTime @default(now())
+  pocketId   String?
+  // Dueño del presupuesto: null = Personal
+  businessId String?
+  createdAt  DateTime @default(now())
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pocket Pocket? @relation(fields: [pocketId], references: [id], onDelete: SetNull)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pocket   Pocket?   @relation(fields: [pocketId], references: [id], onDelete: SetNull)
+  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([businessId])
 }
 
 // ─── Por cobrar / préstamos ──────────────────────────────────────────────────
@@ -330,6 +335,8 @@ model Debt {
 // Separan parte del saldo de una cuenta real (ahorro, metas…). El dinero sigue en
 // la cuenta; el apartado solo lo marca como "no disponible".
 // Disponible de una cuenta = saldo − suma de sus apartados.
+// Cada dueño (Personal o un negocio) tiene una Caja (`isMain`): ahí cae su dinero y, al entrar,
+// se reparte según las partidas del presupuesto de ese dueño.
 
 enum PocketKind {
   SAVINGS // ahorro
@@ -349,6 +356,7 @@ model Pocket {
   targetDate   DateTime?  @db.Date
   color        String     @default("#0f766e")
   archived     Boolean    @default(false)
+  isMain       Boolean    @default(false) // Caja del dueño
   createdAt    DateTime   @default(now())
 
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -367,6 +375,8 @@ model PocketMovement {
   description         String   @default("")
   // Ingreso del que salió (al repartir un ingreso según el presupuesto)
   sourceTransactionId String?
+  // Une los movimientos de una misma operación (ingreso y sus repartos, o un traspaso)
+  groupId             String?
   createdAt           DateTime @default(now())
 
   pocket            Pocket       @relation(fields: [pocketId], references: [id], onDelete: Cascade)
@@ -374,6 +384,7 @@ model PocketMovement {
 
   @@index([pocketId])
   @@index([sourceTransactionId])
+  @@index([groupId])
 }
 
 // ─── Tasas de cambio (global) ────────────────────────────────────────────────
