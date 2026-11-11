@@ -5,7 +5,9 @@ import { TransactionList } from "@/components/transaction-list";
 import { Amount, Badge, buttonClass, Card, EmptyState, PageHeader, SectionTitle } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
+import { formatPercent } from "@/lib/budget";
 import {
+  getBudgetOverview,
   getDebts,
   getMonthSummary,
   getReceivables,
@@ -21,13 +23,14 @@ async function DashboardPageContent() {
   const month = currentMonth();
   const rates = await getCurrentRates({ refreshIfStale: true });
   const rate = pickRate(rates, user.preferredRateSource);
-  const [wallets, summary, recurring, receivables, debts, recent] = await Promise.all([
+  const [wallets, summary, recurring, receivables, debts, recent, budget] = await Promise.all([
     getWalletsWithBalance(user.id),
     getMonthSummary(user.id, month, rate),
     getRecurringForMonth(user.id, month),
     getReceivables(user.id, { onlyOpen: true }),
     getDebts(user.id, { onlyOpen: true }),
     listTransactions(user.id, {}, 8),
+    getBudgetOverview(user.id, user.displayCurrency, rate),
   ]);
 
   const cur = user.displayCurrency;
@@ -172,6 +175,41 @@ async function DashboardPageContent() {
         </div>
 
         <div className="flex flex-col gap-6">
+          <section>
+            <SectionTitle>Presupuesto</SectionTitle>
+            <Card className="p-0">
+              {budget.income.isZero() ? (
+                <p className="p-4 text-sm text-muted">Registra tus ingresos fijos para ver cómo se reparten.</p>
+              ) : (
+                <ul className="divide-y divide-border text-sm">
+                  <li className="flex items-center justify-between gap-2 px-4 py-2.5">
+                    <span className="font-medium">Ingresos fijos</span>
+                    <span className="tabular text-positive">{formatMoney(budget.income, cur)}</span>
+                  </li>
+                  <li className="flex items-center justify-between gap-2 px-4 py-2.5">
+                    <span>Gastos fijos</span>
+                    <span className="tabular">{formatPercent(budget.fixedPercent)}</span>
+                  </li>
+                  {budget.buckets.map((b) => (
+                    <li key={b.id} className="flex items-center gap-2 px-4 py-2.5">
+                      <span className="size-2.5 rounded-full" style={{ background: b.color }} />
+                      <span className="flex-1">{b.name}</span>
+                      <span className="tabular">{formatPercent(b.percent)}</span>
+                    </li>
+                  ))}
+                  <li className="flex items-center justify-between gap-2 px-4 py-2.5">
+                    <span>Libre</span>
+                    <span className={budget.overBudget ? "tabular text-negative" : "tabular"}>
+                      {formatPercent(budget.freePercent)} · {formatMoney(budget.free, cur)}
+                    </span>
+                  </li>
+                </ul>
+              )}
+              <Link href="/presupuesto" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
+                Ir a presupuesto
+              </Link>
+            </Card>
+          </section>
           <section>
             <SectionTitle>Gastos fijos pendientes</SectionTitle>
             <Card className="p-0">

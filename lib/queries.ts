@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import type { Prisma, TransactionType } from "@/lib/generated/prisma/client";
 import { convert, dec, Decimal, INFLOW_TYPES } from "@/lib/money";
 import { monthRange } from "@/lib/utils";
+import { computeBudget } from "@/lib/budget";
 
 // Todas las funciones reciben el userId ya verificado por requireUser().
 
@@ -222,6 +223,7 @@ export async function getRecurringForMonth(userId: string, month: string) {
         where: { date: { gte: start, lt: end } },
         select: { id: true, date: true, amount: true, wallet: { select: { name: true, currencyCode: true } } },
       },
+      paidMarks: { where: { month }, select: { date: true } },
     },
     orderBy: [{ active: "desc" }, { dayOfMonth: "asc" }],
   });
@@ -232,10 +234,50 @@ export async function getRecurringForMonth(userId: string, month: string) {
     return {
       ...r,
       dueDate: new Date(Date.UTC(y, m - 1, day)),
-      paid: r.transactions.length > 0,
+      paid: r.transactions.length > 0 || r.paidMarks.length > 0,
       payment: r.transactions[0] ?? null,
+      /** Marcado como pagado sin movimiento */
+      paidMark: r.paidMarks[0] ?? null,
     };
   });
+}
+
+/** Ingresos fijos (activos primero). */
+export function getRecurringIncome(userId: string) {
+  return prisma.recurringIncome.findMany({
+    where: { userId },
+    include: {
+      wallet: { select: { id: true, name: true } },
+      category: { select: { id: true, name: true } },
+      business: { select: { id: true, name: true } },
+    },
+    orderBy: [{ active: "desc" }, { dayOfMonth: "asc" }],
+  });
+}
+
+export function getBudgetBuckets(userId: string) {
+  return prisma.budgetBucket.findMany({ where: { userId }, orderBy: [{ percent: "desc" }, { createdAt: "asc" }] });
+}
+
+/**
+ * Presupuesto mensual en la divisa del usuario: ingresos fijos activos, gastos fijos activos y
+ * partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
+ */
+export async function getBudgetOverview(userId: string, displayCurrency: string, rate: Decimal | null) {
+  const [incomes, expenses, buckets] = await Promise.all([
+    prisma.recurringIncome.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
+    prisma.recurringExpense.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
+    getBudgetBuckets(userId),
+  ]);
+  const sum = (list: { amount: Prisma.Decimal; currencyCode: string }[]) =>
+    list.reduce((acc, i) => {
+      try {
+        return acc.add(convert(i.amount, i.currencyCode, displayCurrency, rate));
+      } catch {
+        return acc;
+      }
+    }, new Decimal(0));
+  return computeBudget(sum(incomes), sum(expenses), buckets);
 }
 
 /** Cuentas por cobrar y préstamos con el monto cobrado hasta ahora (en la divisa del registro). */

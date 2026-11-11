@@ -107,6 +107,31 @@ export const recurringSchema = z.object({
   path: ["walletId"],
 });
 
+export const recurringIncomeSchema = z.object({
+  name: z.string({ error: "Escribe un nombre" }).min(1).max(80),
+  amount: amount(),
+  currencyCode,
+  dayOfMonth: z.coerce.number().int().min(1, "Día entre 1 y 31").max(31, "Día entre 1 y 31"),
+  walletId: optionalId,
+  categoryId: optionalId,
+  businessId: optionalId,
+});
+
+export const budgetBucketSchema = z.object({
+  name: z.string({ error: "Escribe un nombre" }).min(1).max(60),
+  percent: z
+    .string({ error: "El porcentaje es obligatorio" })
+    .transform((v, ctx) => {
+      const n = normalizeAmount(v.replace("%", ""));
+      if (n === null || Number(n) <= 0 || Number(n) > 100) {
+        ctx.addIssue({ code: "custom", message: "El porcentaje debe estar entre 0 y 100" });
+        return z.NEVER;
+      }
+      return n;
+    }),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+});
+
 export const receivableSchema = z.object({
   kind: z.enum(["RECEIVABLE", "LOAN_GIVEN"]),
   counterparty: z.string({ error: "¿Quién te debe?" }).min(1).max(80),

@@ -60,6 +60,7 @@ export async function processAutoPayments(userId?: string) {
       autoPay: true,
       walletId: { not: null },
       transactions: { none: { date: { gte: start, lt: end } } },
+      paidMarks: { none: { month } },
     },
     include: { wallet: { select: { id: true, currencyCode: true } } },
   });

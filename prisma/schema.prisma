@@ -28,6 +28,8 @@ model User {
   businesses       Business[]
   transactions     Transaction[]
   recurringExpense RecurringExpense[]
+  recurringIncome  RecurringIncome[]
+  budgetBuckets    BudgetBucket[]
   receivables      Receivable[]
   debts            Debt[]
   pockets          Pocket[]
@@ -63,11 +65,12 @@ model Wallet {
   archived       Boolean    @default(false)
   createdAt      DateTime   @default(now())
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  currency     Currency      @relation(fields: [currencyCode], references: [code])
-  transactions Transaction[]
-  recurring    RecurringExpense[]
-  pockets      Pocket[]
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency     Currency           @relation(fields: [currencyCode], references: [code])
+  transactions    Transaction[]
+  recurring       RecurringExpense[]
+  recurringIncome RecurringIncome[]
+  pockets         Pocket[]
 
   @@index([userId])
 }
@@ -85,9 +88,10 @@ model Category {
   color    String       @default("#64748b")
   archived Boolean      @default(false)
 
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
-  recurring    RecurringExpense[]
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  recurring       RecurringExpense[]
+  recurringIncome RecurringIncome[]
 
   @@unique([userId, kind, name])
 }
@@ -100,9 +104,10 @@ model Business {
   archived Boolean @default(false)
 
   user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  splits      TransactionSplit[]
-  recurring   RecurringExpense[]
-  receivables Receivable[]
+  splits          TransactionSplit[]
+  recurring       RecurringExpense[]
+  recurringIncome RecurringIncome[]
+  receivables     Receivable[]
   debts       Debt[]
   pockets     Pocket[]
 
@@ -177,25 +182,79 @@ model TransactionSplit {
 // ─── Gastos fijos ────────────────────────────────────────────────────────────
 
 model RecurringExpense {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   userId       String
   name         String
-  amount       Decimal   @db.Decimal(20, 8)
+  amount       Decimal  @db.Decimal(20, 8)
   currencyCode String
   dayOfMonth   Int
   walletId     String?
   categoryId   String?
   businessId   String?
-  active       Boolean   @default(true)
+  active       Boolean  @default(true)
   // Se cobra solo (domiciliado): el pago se registra automáticamente el día del vencimiento
-  autoPay      Boolean   @default(false)
-  createdAt    DateTime  @default(now())
+  autoPay      Boolean  @default(false)
+  createdAt    DateTime @default(now())
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet       Wallet?       @relation(fields: [walletId], references: [id], onDelete: SetNull)
-  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  business     Business?     @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       Wallet?             @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  business     Business?           @relation(fields: [businessId], references: [id], onDelete: SetNull)
   transactions Transaction[]
+  paidMarks    RecurringPaidMark[]
+
+  @@index([userId])
+}
+
+// Mes marcado como pagado sin registrar un movimiento (p. ej. ya estaba registrado aparte)
+model RecurringPaidMark {
+  id          String   @id @default(cuid())
+  recurringId String
+  month       String // yyyy-mm
+  date        DateTime @db.Date
+  createdAt   DateTime @default(now())
+
+  recurring RecurringExpense @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringId, month])
+}
+
+// ─── Ingresos fijos ──────────────────────────────────────────────────────────
+
+model RecurringIncome {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  amount       Decimal  @db.Decimal(20, 8)
+  currencyCode String
+  dayOfMonth   Int
+  walletId     String?
+  categoryId   String?
+  businessId   String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet   Wallet?   @relation(fields: [walletId], references: [id], onDelete: SetNull)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  business Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+// ─── Presupuesto ─────────────────────────────────────────────────────────────
+// Porcentaje de los ingresos fijos que se destina a algo (diversión, ahorro, inversión…).
+// Los gastos fijos no son una partida: su porcentaje se calcula a partir de sus montos.
+
+model BudgetBucket {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  percent   Decimal  @db.Decimal(5, 2)
+  color     String   @default("#6366f1")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }

@@ -95,7 +95,21 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                         <Amount className="font-medium" value={formatMoney(r.amount, r.currencyCode)} />
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2 pl-8">
-                        {r.paid && r.payment ? (
+                        {r.paid && r.paidMark && !r.payment ? (
+                          <>
+                            <span className="text-xs text-positive">
+                              Pagado el {formatDate(r.paidMark.date, { day: "2-digit", month: "short" })} (sin movimiento)
+                            </span>
+                            <ConfirmButton
+                              action={unpayRecurring.bind(null, r.id, month)}
+                              confirm="¿Volver a marcar este gasto como pendiente?"
+                              variant="ghost"
+                              className="h-8 text-xs text-muted"
+                            >
+                              Deshacer
+                            </ConfirmButton>
+                          </>
+                        ) : r.paid && r.payment ? (
                           <>
                             <span className="text-xs text-positive">
                               {r.autoPay ? "Cobrado" : "Pagado"} el{" "}
@@ -152,6 +166,13 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                 title="Fecha en que pagaste; se usa la tasa BCV de ese día"
                                 className="h-8 w-36 text-xs"
                               />
+                              <label
+                                className="flex items-center gap-1.5 text-xs text-muted"
+                                title="Lo marca como pagado sin registrar un gasto en la cuenta (por ejemplo, si ya lo registraste aparte)"
+                              >
+                                <input type="checkbox" name="noMovement" />
+                                Sin movimiento
+                              </label>
                               <SubmitButton variant="secondary" className="h-8 text-xs">
                                 Marcar pagado
                               </SubmitButton>

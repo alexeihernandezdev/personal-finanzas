@@ -105,20 +105,34 @@ const paySchema = z.object({
 
 export async function payRecurring(id: string, month: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
-  const parsed = paySchema.safeParse(formObject(formData));
-  if (!parsed.success) return zodError(parsed.error);
+  const form = formObject(formData);
   const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
   if (!r) return fail("Gasto fijo no encontrado");
-  const wallet = await prisma.wallet.findFirst({ where: { id: parsed.data.walletId, userId: user.id } });
-  if (!wallet) return fail("Cuenta inválida");
 
   const { start, end } = monthRange(month);
-  const already = await prisma.transaction.count({ where: { recurringId: id, date: { gte: start, lt: end } } });
-  if (already) return fail("Este gasto ya está marcado como pagado este mes");
+  const [txCount, markCount] = await Promise.all([
+    prisma.transaction.count({ where: { recurringId: id, date: { gte: start, lt: end } } }),
+    prisma.recurringPaidMark.count({ where: { recurringId: id, month } }),
+  ]);
+  if (txCount || markCount) return fail("Este gasto ya está marcado como pagado este mes");
 
   // La fecha del pago debe caer en el mes, para que el estado se calcule bien
-  let date = parseISODate(parsed.data.date);
+  const parsedDate = isoDate.safeParse(form.date);
+  if (!parsedDate.success) return zodError(parsedDate.error);
+  let date = parseISODate(parsedDate.data);
   if (date < start || date >= end) date = start;
+
+  // Solo marcarlo como pagado, sin tocar ninguna cuenta (el movimiento ya existe o no se quiere registrar)
+  if (form.noMovement === "on") {
+    await prisma.recurringPaidMark.create({ data: { recurringId: id, month, date } });
+    revalidatePath("/", "layout");
+    return { ok: true };
+  }
+
+  const parsed = paySchema.safeParse(form);
+  if (!parsed.success) return zodError(parsed.error);
+  const wallet = await prisma.wallet.findFirst({ where: { id: parsed.data.walletId, userId: user.id } });
+  if (!wallet) return fail("Cuenta inválida");
 
   // El monto puede escribirse en otra divisa; se guarda convertido a la divisa de la cuenta
   // con la tasa BCV del día del pago
@@ -142,6 +156,7 @@ export async function unpayRecurring(id: string, month: string) {
   const { start, end } = monthRange(month);
   await prisma.$transaction([
     prisma.transaction.deleteMany({ where: { userId: user.id, recurringId: id, date: { gte: start, lt: end } } }),
+    prisma.recurringPaidMark.deleteMany({ where: { recurringId: id, month } }),
     ...(r.autoPay ? [prisma.recurringExpense.update({ where: { id }, data: { autoPay: false } })] : []),
   ]);
   revalidatePath("/", "layout");

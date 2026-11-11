@@ -5,8 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeftRight,
+  Banknote,
   BarChart3,
   CalendarClock,
+  ChartPie,
   HandCoins,
   LayoutDashboard,
   ListOrdered,
@@ -26,7 +28,9 @@ export const NAV = [
   { href: "/apartados", label: "Apartados", icon: PiggyBank },
   { href: "/movimientos", label: "Movimientos", icon: ListOrdered },
   { href: "/transferencias", label: "Transferencias", icon: ArrowLeftRight },
+  { href: "/ingresos-fijos", label: "Ingresos fijos", icon: Banknote },
   { href: "/gastos-fijos", label: "Gastos fijos", icon: CalendarClock },
+  { href: "/presupuesto", label: "Presupuesto", icon: ChartPie },
   { href: "/por-cobrar", label: "Por cobrar", icon: HandCoins },
   { href: "/deudas", label: "Deudas", icon: Receipt },
   { href: "/reportes", label: "Reportes", icon: BarChart3 },
