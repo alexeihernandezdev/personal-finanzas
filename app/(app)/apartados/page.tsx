@@ -1,18 +1,20 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { PocketFields, pocketKindLabel } from "@/components/pocket-fields";
 import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, SectionTitle, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
-import { Decimal, formatMoney } from "@/lib/money";
+import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getMoneySummary, getPockets, type PocketWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
-import { formatDate, toISODate, todayISO } from "@/lib/utils";
+import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import { createPocket, deletePocket, deletePocketMovement, movePocketMoney, toggleArchivePocket, updatePocket } from "./actions";
 
 type BusinessOption = { id: string; name: string };
 
-async function ApartadosPageContent() {
+async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
+  const { negocio } = await searchParams;
   const user = await requireUser();
   const rate = pickRate(await getCurrentRates(), user.preferredRateSource);
   const cur = user.displayCurrency;
@@ -25,16 +27,26 @@ async function ApartadosPageContent() {
 
   const businessOptions: BusinessOption[] = businesses.map((b) => ({ id: b.id, name: b.name }));
 
-  const active = pockets.filter((p) => !p.archived);
-  const archived = pockets.filter((p) => p.archived);
-  // Agrupa por dueño del dinero: Personal primero y luego cada negocio
-  const groups = new Map<string, { name: string; pockets: PocketWithBalance[] }>([["personal", { name: "Personal", pockets: [] }]]);
-  for (const p of active) {
-    const key = p.businessId ?? "personal";
-    const g = groups.get(key) ?? { name: p.business?.name ?? "Personal", pockets: [] };
-    g.pockets.push(p);
-    groups.set(key, g);
+  // Una pestaña por dueño del dinero: Personal primero y luego cada negocio (también los
+  // archivados que todavía tengan apartados)
+  const tabs = [{ key: "personal", name: "Personal" }, ...businessOptions.map((b) => ({ key: b.id, name: b.name }))];
+  for (const p of pockets) {
+    if (p.business && !tabs.some((t) => t.key === p.business!.id)) tabs.push({ key: p.business.id, name: p.business.name });
   }
+  const currentTab = tabs.find((t) => t.key === negocio) ?? tabs[0];
+  const tabPockets = (key: string) => pockets.filter((p) => (p.businessId ?? "personal") === key);
+  const reservedIn = (key: string) =>
+    tabPockets(key).reduce((acc, p) => {
+      try {
+        return acc.add(convert(p.balance, p.currencyCode, cur, rate));
+      } catch {
+        return acc;
+      }
+    }, new Decimal(0));
+
+  const inTab = tabPockets(currentTab.key);
+  const active = inTab.filter((p) => !p.archived);
+  const archived = inTab.filter((p) => p.archived);
 
   return (
     <>
@@ -62,23 +74,38 @@ async function ApartadosPageContent() {
       )}
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-6">
-          {active.length === 0 && (
-            <EmptyState>
-              Todavía no tienes apartados. Crea uno para separar dinero sin moverlo de tus cuentas.
-            </EmptyState>
-          )}
-          {[...groups.entries()]
-            .filter(([, g]) => g.pockets.length > 0)
-            .map(([key, g]) => (
-              <section key={key}>
-                <SectionTitle>{g.name}</SectionTitle>
-                <div className="flex flex-col gap-3">
-                  {g.pockets.map((p) => (
-                    <PocketCard key={p.id} pocket={p} businesses={businessOptions} />
-                  ))}
-                </div>
-              </section>
+          <nav className="flex flex-wrap gap-2" aria-label="Dueño del dinero">
+            {tabs.map((t) => (
+              <Link
+                key={t.key}
+                href={`/apartados?negocio=${t.key}`}
+                className={cn(
+                  "flex items-baseline gap-2 rounded-lg px-3 py-1.5 text-sm",
+                  currentTab.key === t.key ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+                )}
+              >
+                {t.name}
+                <span className="text-xs tabular opacity-80">{formatMoney(reservedIn(t.key), cur)}</span>
+              </Link>
             ))}
+          </nav>
+          {active.length === 0 ? (
+            <EmptyState>
+              {currentTab.key === "personal"
+                ? "Todavía no tienes apartados personales."
+                : `Todavía no tienes apartados para ${currentTab.name}.`}{" "}
+              Crea uno para separar dinero sin moverlo de tus cuentas.
+            </EmptyState>
+          ) : (
+            <section>
+              <SectionTitle>{currentTab.name}</SectionTitle>
+              <div className="flex flex-col gap-3">
+                {active.map((p) => (
+                  <PocketCard key={p.id} pocket={p} businesses={businessOptions} />
+                ))}
+              </div>
+            </section>
+          )}
           {archived.length > 0 && (
             <section>
               <SectionTitle>Archivados</SectionTitle>
@@ -92,8 +119,11 @@ async function ApartadosPageContent() {
         </div>
         <Card className="h-fit">
           <h2 className="mb-4 font-semibold">Nuevo apartado</h2>
-          <ActionForm action={createPocket} className="flex flex-col gap-3">
-            <PocketFields businesses={businessOptions} />
+          <ActionForm key={currentTab.key} action={createPocket} className="flex flex-col gap-3">
+            <PocketFields
+              businesses={businessOptions}
+              defaultBusinessId={currentTab.key === "personal" ? "" : currentTab.key}
+            />
             <Field label="Apartar ahora" hint="Opcional: sale de lo disponible para usar">
               <Input name="initialAmount" inputMode="decimal" placeholder="0,00" />
             </Field>
@@ -223,10 +253,10 @@ function PocketCard({
   );
 }
 
-export default function ApartadosPage() {
+export default function ApartadosPage(props: PageProps<"/apartados">) {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <ApartadosPageContent />
+      <ApartadosPageContent {...props} />
     </Suspense>
   );
 }

@@ -15,9 +15,12 @@ export function pocketKindLabel(kind: string) {
 export function PocketFields({
   businesses,
   defaults,
+  defaultBusinessId,
   currencyLocked,
 }: {
   businesses: { id: string; name: string }[];
+  // Negocio preseleccionado al crear ("" = Personal)
+  defaultBusinessId?: string;
   defaults?: {
     name: string;
     kind: string;
@@ -45,7 +48,7 @@ export function PocketFields({
         </Select>
       </Field>
       <Field label="Para" hint="Separa el dinero personal del de cada negocio">
-        <Select name="businessId" defaultValue={defaults?.businessId ?? ""}>
+        <Select name="businessId" defaultValue={defaults?.businessId ?? defaultBusinessId ?? ""}>
           <option value="">Personal</option>
           {businesses.map((b) => (
             <option key={b.id} value={b.id}>
