@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
-import { CheckCircle2, Circle } from "lucide-react";
+import { CheckCircle2, Circle, Repeat } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { MonthNav, parseMonthParam } from "@/components/month-nav";
 import { CURRENCIES } from "@/components/wallet-fields";
@@ -9,13 +10,16 @@ import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getCategories, getRecurringForMonth, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
+import { processAutoPayments } from "@/lib/recurring";
 import { cn, currentMonth, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { createRecurring, deleteRecurring, payRecurring, toggleRecurring, unpayRecurring } from "./actions";
+import { createRecurring, deleteRecurring, payRecurring, toggleAutoPay, toggleRecurring, unpayRecurring } from "./actions";
 
 async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos">) {
   const user = await requireUser();
   const { mes } = await searchParams;
   const month = parseMonthParam(mes, currentMonth());
+  // Registra los cobros automáticos que ya vencieron (por si el cron aún no corrió)
+  await processAutoPayments(user.id).catch(() => null);
   const [items, wallets, categories, businesses, rates] = await Promise.all([
     getRecurringForMonth(user.id, month),
     getWalletsWithBalance(user.id),
@@ -82,6 +86,11 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                           </p>
                         </div>
                         {overdue && <Badge className="bg-negative/10 text-negative">Vencido</Badge>}
+                        {r.autoPay && (
+                          <Badge className="gap-1">
+                            <Repeat className="size-3" /> Automático
+                          </Badge>
+                        )}
                         {!r.active && <Badge>Pausado</Badge>}
                         <Amount className="font-medium" value={formatMoney(r.amount, r.currencyCode)} />
                       </div>
@@ -89,12 +98,20 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                         {r.paid && r.payment ? (
                           <>
                             <span className="text-xs text-positive">
-                              Pagado el {formatDate(r.payment.date, { day: "2-digit", month: "short" })} con{" "}
-                              {r.payment.wallet.name} ({formatMoney(r.payment.amount, r.payment.wallet.currencyCode)})
+                              {r.autoPay ? "Cobrado" : "Pagado"} el{" "}
+                              {formatDate(r.payment.date, { day: "2-digit", month: "short" })} con {r.payment.wallet.name} (
+                              {formatMoney(r.payment.amount, r.payment.wallet.currencyCode)})
                             </span>
+                            <Link href={`/movimientos/${r.payment.id}`} className="px-2 text-xs text-muted hover:text-foreground">
+                              Editar
+                            </Link>
                             <ConfirmButton
                               action={unpayRecurring.bind(null, r.id, month)}
-                              confirm="¿Deshacer este pago? Se eliminará el movimiento registrado."
+                              confirm={
+                                r.autoPay
+                                  ? "¿Deshacer este cobro? Se eliminará el movimiento y el gasto pasará a pago manual."
+                                  : "¿Deshacer este pago? Se eliminará el movimiento registrado."
+                              }
                               variant="ghost"
                               className="h-8 text-xs text-muted"
                             >
@@ -102,7 +119,13 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                             </ConfirmButton>
                           </>
                         ) : (
-                          r.active && (
+                          r.active &&
+                          (r.autoPay ? (
+                            <span className="text-xs text-muted">
+                              Se cobra solo el {formatDate(r.dueDate, { day: "2-digit", month: "short" })}
+                              {r.wallet && ` de ${r.wallet.name}`}
+                            </span>
+                          ) : (
                             <ActionForm
                               action={payRecurring.bind(null, r.id, month)}
                               className="flex flex-wrap items-center gap-2"
@@ -115,21 +138,32 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                 ))}
                               </Select>
                               <Input name="amount" defaultValue={r.amount.toFixed(2)} inputMode="decimal" className="h-8 w-24 text-xs" />
-                              <Select name="amountCurrency" defaultValue={r.currencyCode} className="h-8 w-20 text-xs">
+                              <Select name="amountCurrency" defaultValue={r.currencyCode} className="h-8 w-24 text-xs">
                                 {CURRENCIES.map((c) => (
                                   <option key={c.value} value={c.value}>
                                     {c.value}
                                   </option>
                                 ))}
                               </Select>
-                              <Input name="date" type="date" defaultValue={toISODate(r.dueDate)} className="h-8 w-36 text-xs" />
+                              <Input
+                                name="date"
+                                type="date"
+                                defaultValue={month === currentMonth() ? today : toISODate(r.dueDate)}
+                                title="Fecha en que pagaste; se usa la tasa BCV de ese día"
+                                className="h-8 w-36 text-xs"
+                              />
                               <SubmitButton variant="secondary" className="h-8 text-xs">
                                 Marcar pagado
                               </SubmitButton>
                             </ActionForm>
-                          )
+                          ))
                         )}
                         <div className="ml-auto flex">
+                          {(r.autoPay || r.walletId) && (
+                            <ConfirmButton action={toggleAutoPay.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                              {r.autoPay ? "Hacer manual" : "Hacer automático"}
+                            </ConfirmButton>
+                          )}
                           <ConfirmButton action={toggleRecurring.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
                             {r.active ? "Pausar" : "Activar"}
                           </ConfirmButton>
@@ -205,6 +239,15 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                 ))}
               </Select>
             </Field>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" name="autoPay" className="mt-0.5" />
+              <span>
+                Se cobra automáticamente
+                <span className="block text-xs text-muted">
+                  Se registra solo el día del vencimiento en la cuenta habitual, con la tasa BCV de ese día.
+                </span>
+              </span>
+            </label>
             <SubmitButton>Crear</SubmitButton>
           </ActionForm>
         </Card>

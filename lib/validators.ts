@@ -98,6 +98,13 @@ export const recurringSchema = z.object({
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
+  autoPay: z
+    .string()
+    .optional()
+    .transform((v) => v === "on"),
+}).refine((d) => !d.autoPay || d.walletId, {
+  message: "Los pagos automáticos necesitan una cuenta habitual",
+  path: ["walletId"],
 });
 
 export const receivableSchema = z.object({

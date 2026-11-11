@@ -5,8 +5,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
-import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
-import { convert } from "@/lib/money";
+import { assertOwned, OwnershipError } from "@/lib/guards";
+import { processAutoPayments, recordRecurringPayment } from "@/lib/recurring";
 import { monthRange, parseISODate } from "@/lib/utils";
 import { amount, currencyCode, isoDate, recurringSchema } from "@/lib/validators";
 
@@ -31,8 +31,10 @@ export async function createRecurring(_prev: ActionState, formData: FormData): P
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,
+      autoPay: d.autoPay,
     },
   });
+  if (d.autoPay) await processAutoPayments(user.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Gasto fijo creado" };
 }
@@ -42,6 +44,16 @@ export async function toggleRecurring(id: string) {
   const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
   if (!r) return;
   await prisma.recurringExpense.update({ where: { id }, data: { active: !r.active } });
+  revalidatePath("/", "layout");
+}
+
+export async function toggleAutoPay(id: string) {
+  const user = await requireUser();
+  const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
+  if (!r) return;
+  // Sin cuenta habitual no hay de dónde cobrarlo automáticamente
+  if (!r.autoPay && !r.walletId) return;
+  await prisma.recurringExpense.update({ where: { id }, data: { autoPay: !r.autoPay } });
   revalidatePath("/", "layout");
 }
 
@@ -77,40 +89,28 @@ export async function payRecurring(id: string, month: string, _prev: ActionState
   if (date < start || date >= end) date = start;
 
   // El monto puede escribirse en otra divisa; se guarda convertido a la divisa de la cuenta
-  const rate = await snapshotRate(user.preferredRateSource);
-  let walletAmount: string;
+  // con la tasa BCV del día del pago
   try {
-    walletAmount = convert(parsed.data.amount, parsed.data.amountCurrency, wallet.currencyCode, rate.rateVesPerUsd)
-      .toDecimalPlaces(2)
-      .toString();
+    await recordRecurringPayment(r, wallet, parsed.data.amount, parsed.data.amountCurrency, date);
   } catch {
     return fail("No hay tasa disponible para convertir el monto");
   }
-
-  await prisma.transaction.create({
-    data: {
-      userId: user.id,
-      walletId: wallet.id,
-      type: "EXPENSE",
-      amount: walletAmount,
-      date,
-      description: r.name,
-      categoryId: r.categoryId,
-      recurringId: r.id,
-      ...rate,
-      splits: { create: [{ businessId: r.businessId, amount: walletAmount }] },
-    },
-  });
   revalidatePath("/", "layout");
   return { ok: true };
 }
 
-/** Elimina el pago registrado de un gasto fijo en un mes, para poder registrarlo de nuevo. */
+/**
+ * Elimina el pago registrado de un gasto fijo en un mes, para poder registrarlo de nuevo.
+ * Si era automático pasa a manual; si no, el pago se volvería a registrar solo.
+ */
 export async function unpayRecurring(id: string, month: string) {
   const user = await requireUser();
+  const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
+  if (!r) return;
   const { start, end } = monthRange(month);
-  await prisma.transaction.deleteMany({
-    where: { userId: user.id, recurringId: id, date: { gte: start, lt: end } },
-  });
+  await prisma.$transaction([
+    prisma.transaction.deleteMany({ where: { userId: user.id, recurringId: id, date: { gte: start, lt: end } } }),
+    ...(r.autoPay ? [prisma.recurringExpense.update({ where: { id }, data: { autoPay: false } })] : []),
+  ]);
   revalidatePath("/", "layout");
 }

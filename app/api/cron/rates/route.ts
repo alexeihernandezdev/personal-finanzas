@@ -1,4 +1,5 @@
 import { refreshRates } from "@/lib/rates";
+import { processAutoPayments } from "@/lib/recurring";
 
 // Vercel Cron llama a esta ruta con `Authorization: Bearer $CRON_SECRET`.
 export async function GET(request: Request) {
@@ -7,5 +8,7 @@ export async function GET(request: Request) {
     return Response.json({ error: "No autorizado" }, { status: 401 });
   }
   const result = await refreshRates();
-  return Response.json(result, { status: result.saved.length ? 200 : 502 });
+  // Con la tasa del día ya guardada, registra los gastos fijos automáticos que vencen hoy
+  const autoPayments = await processAutoPayments().catch(() => null);
+  return Response.json({ ...result, autoPayments }, { status: result.saved.length ? 200 : 502 });
 }

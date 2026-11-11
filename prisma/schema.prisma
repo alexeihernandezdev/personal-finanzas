@@ -187,6 +187,8 @@ model RecurringExpense {
   categoryId   String?
   businessId   String?
   active       Boolean   @default(true)
+  // Se cobra solo (domiciliado): el pago se registra automáticamente el día del vencimiento
+  autoPay      Boolean   @default(false)
   createdAt    DateTime  @default(now())
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
