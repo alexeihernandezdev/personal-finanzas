@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Card, EmptyState, Field, Input, PageHeader, SectionTitle } from "@/components/ui";
 import { formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
@@ -9,7 +10,8 @@ import { Decimal, formatMoney } from "@/lib/money";
 import { getBudgetOverview } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn } from "@/lib/utils";
-import { createBudgetBucket, createSuggestedBuckets, deleteBudgetBucket, updateBudgetBucket, updateFixedBuffer } from "./actions";
+import { createBudgetBucket, createSuggestedBuckets, moveBudgetBucket } from "./actions";
+import { EditBucketButton, EditBufferButton } from "./edit-dialogs";
 
 async function PresupuestoPageContent() {
   const user = await requireUser();
@@ -94,66 +96,38 @@ async function PresupuestoPageContent() {
                 <span className="size-3 shrink-0 rounded-full bg-muted" />
                 <span className="flex-1 font-medium">Gastos fijos</span>
                 <span className="w-16 text-right tabular text-muted">{noIncome ? "—" : formatPercent(budget.fixedPercent)}</span>
-                <span className="w-32 text-right tabular">{formatMoney(budget.fixed, cur)}</span>
+                <span className="w-28 text-right tabular">{formatMoney(budget.fixed, cur)}</span>
+                <span className={rowActions} />
               </li>
-              <li className="py-2">
-                <ActionForm action={updateFixedBuffer} resetOnSuccess={false} className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="size-3 shrink-0 rounded-full bg-muted/50" />
-                  <span className="flex-1 font-medium">
-                    Colchón
-                    <span className="block text-xs font-normal text-muted">Extra sobre tus gastos fijos para imprevistos</span>
+              <li className="flex items-center gap-3 py-2.5 text-sm">
+                <span className="size-3 shrink-0 rounded-full bg-muted/50" />
+                <span className="min-w-0 flex-1 font-medium">
+                  Colchón
+                  <span className="block text-xs font-normal text-muted">
+                    {formatPercent(budget.bufferPercent)} sobre tus gastos fijos para imprevistos
                   </span>
-                  <div className="relative">
-                    <Input
-                      name="percent"
-                      defaultValue={budget.bufferPercent.toString()}
-                      inputMode="decimal"
-                      title="Porcentaje sobre el total de tus gastos fijos"
-                      className="h-8 w-20 pr-6 text-right tabular"
+                </span>
+                <span className="w-16 text-right tabular text-muted">
+                  {noIncome ? "—" : formatPercent(budget.bufferIncomePercent)}
+                </span>
+                <span className="w-28 text-right tabular">{formatMoney(budget.buffer, cur)}</span>
+                <span className={rowActions}>
+                  <EditBufferButton percent={budget.bufferPercent.toString()} />
+                </span>
+              </li>
+              {budget.buckets.map((b, i) => (
+                <li key={b.id} className="flex items-center gap-3 py-2.5 text-sm">
+                  <span className="size-3 shrink-0 rounded-full" style={{ background: b.color }} />
+                  <span className="min-w-0 flex-1 truncate font-medium">{b.name}</span>
+                  <span className="w-16 text-right tabular text-muted">{formatPercent(b.percent)}</span>
+                  <span className="w-28 text-right tabular">{formatMoney(b.amount, cur)}</span>
+                  <span className={rowActions}>
+                    <MoveButton id={b.id} direction="up" disabled={i === 0} />
+                    <MoveButton id={b.id} direction="down" disabled={i === budget.buckets.length - 1} />
+                    <EditBucketButton
+                      bucket={{ id: b.id, name: b.name, percent: b.percent.toString(), color: b.color }}
                     />
-                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">%</span>
-                  </div>
-                  <SubmitButton variant="ghost" className="h-8 text-xs">
-                    Guardar
-                  </SubmitButton>
-                  <span className="w-16 text-right tabular text-muted">
-                    {noIncome ? "—" : formatPercent(budget.bufferIncomePercent)}
                   </span>
-                  <span className="w-32 text-right tabular">{formatMoney(budget.buffer, cur)}</span>
-                </ActionForm>
-              </li>
-              {budget.buckets.map((b) => (
-                <li key={b.id} className="flex flex-wrap items-center gap-2 py-2">
-                  <ActionForm
-                    action={updateBudgetBucket.bind(null, b.id)}
-                    resetOnSuccess={false}
-                    className="flex flex-1 flex-wrap items-center gap-2"
-                  >
-                    <Input name="color" type="color" defaultValue={b.color} className="h-8 w-9 shrink-0 p-1" />
-                    <Input name="name" defaultValue={b.name} required className="h-8 min-w-28 flex-1" />
-                    <div className="relative">
-                      <Input
-                        name="percent"
-                        defaultValue={b.percent.toString()}
-                        inputMode="decimal"
-                        required
-                        className="h-8 w-20 pr-6 text-right tabular"
-                      />
-                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">%</span>
-                    </div>
-                    <span className="w-32 text-right text-sm tabular">{formatMoney(b.amount, cur)}</span>
-                    <SubmitButton variant="ghost" className="h-8 text-xs">
-                      Guardar
-                    </SubmitButton>
-                  </ActionForm>
-                  <ConfirmButton
-                    action={deleteBudgetBucket.bind(null, b.id)}
-                    confirm={`¿Eliminar la partida "${b.name}"?`}
-                    variant="ghost"
-                    className="h-8 text-xs"
-                  >
-                    Eliminar
-                  </ConfirmButton>
                 </li>
               ))}
               <li className="flex items-center gap-3 py-2.5 text-sm">
@@ -162,9 +136,10 @@ async function PresupuestoPageContent() {
                 <span className={cn("w-16 text-right tabular", budget.overBudget ? "text-negative" : "text-muted")}>
                   {noIncome ? "—" : formatPercent(budget.freePercent)}
                 </span>
-                <span className={cn("w-32 text-right tabular", budget.overBudget && "text-negative")}>
+                <span className={cn("w-28 text-right tabular", budget.overBudget && "text-negative")}>
                   {formatMoney(budget.free, cur)}
                 </span>
+                <span className={rowActions} />
               </li>
             </ul>
           </Card>
@@ -206,6 +181,27 @@ async function PresupuestoPageContent() {
         </div>
       </div>
     </>
+  );
+}
+
+/** Columna de acciones de cada fila (ordenar, editar); vacía en las filas fijas para alinear montos. */
+const rowActions = "flex w-[5.25rem] shrink-0 items-center justify-end";
+
+function MoveButton({ id, direction, disabled }: { id: string; direction: "up" | "down"; disabled: boolean }) {
+  const Icon = direction === "up" ? ChevronUp : ChevronDown;
+  const label = direction === "up" ? "Subir" : "Bajar";
+  return (
+    <form action={moveBudgetBucket.bind(null, id, direction)}>
+      <button
+        type="submit"
+        disabled={disabled}
+        aria-label={label}
+        title={label}
+        className="rounded-lg p-1.5 text-muted transition hover:bg-background hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+      >
+        <Icon className="size-3.5" />
+      </button>
+    </form>
   );
 }
 

@@ -256,7 +256,7 @@ export function getRecurringIncome(userId: string) {
 }
 
 export function getBudgetBuckets(userId: string) {
-  return prisma.budgetBucket.findMany({ where: { userId }, orderBy: [{ percent: "desc" }, { createdAt: "asc" }] });
+  return prisma.budgetBucket.findMany({ where: { userId }, orderBy: [{ position: "asc" }, { createdAt: "asc" }] });
 }
 
 /**

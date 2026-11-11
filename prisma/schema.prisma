@@ -254,6 +254,7 @@ model BudgetBucket {
   name      String
   percent   Decimal  @db.Decimal(5, 2)
   color     String   @default("#6366f1")
+  position  Int      @default(0)
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
