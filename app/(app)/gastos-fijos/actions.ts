@@ -6,8 +6,9 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { convert } from "@/lib/money";
 import { monthRange, parseISODate } from "@/lib/utils";
-import { amount, isoDate, recurringSchema } from "@/lib/validators";
+import { amount, currencyCode, isoDate, recurringSchema } from "@/lib/validators";
 
 export async function createRecurring(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -54,6 +55,7 @@ export async function deleteRecurring(id: string) {
 const paySchema = z.object({
   walletId: z.string({ error: "Elige la cuenta con la que pagaste" }),
   amount: amount(),
+  amountCurrency: currencyCode,
   date: isoDate,
 });
 
@@ -74,20 +76,41 @@ export async function payRecurring(id: string, month: string, _prev: ActionState
   let date = parseISODate(parsed.data.date);
   if (date < start || date >= end) date = start;
 
+  // El monto puede escribirse en otra divisa; se guarda convertido a la divisa de la cuenta
+  const rate = await snapshotRate(user.preferredRateSource);
+  let walletAmount: string;
+  try {
+    walletAmount = convert(parsed.data.amount, parsed.data.amountCurrency, wallet.currencyCode, rate.rateVesPerUsd)
+      .toDecimalPlaces(2)
+      .toString();
+  } catch {
+    return fail("No hay tasa disponible para convertir el monto");
+  }
+
   await prisma.transaction.create({
     data: {
       userId: user.id,
       walletId: wallet.id,
       type: "EXPENSE",
-      amount: parsed.data.amount,
+      amount: walletAmount,
       date,
       description: r.name,
       categoryId: r.categoryId,
       recurringId: r.id,
-      ...(await snapshotRate(user.preferredRateSource)),
-      splits: { create: [{ businessId: r.businessId, amount: parsed.data.amount }] },
+      ...rate,
+      splits: { create: [{ businessId: r.businessId, amount: walletAmount }] },
     },
   });
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/** Elimina el pago registrado de un gasto fijo en un mes, para poder registrarlo de nuevo. */
+export async function unpayRecurring(id: string, month: string) {
+  const user = await requireUser();
+  const { start, end } = monthRange(month);
+  await prisma.transaction.deleteMany({
+    where: { userId: user.id, recurringId: id, date: { gte: start, lt: end } },
+  });
+  revalidatePath("/", "layout");
 }

@@ -10,7 +10,7 @@ import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getCategories, getRecurringForMonth, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, currentMonth, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { createRecurring, deleteRecurring, payRecurring, toggleRecurring } from "./actions";
+import { createRecurring, deleteRecurring, payRecurring, toggleRecurring, unpayRecurring } from "./actions";
 
 async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos">) {
   const user = await requireUser();
@@ -87,10 +87,20 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2 pl-8">
                         {r.paid && r.payment ? (
-                          <span className="text-xs text-positive">
-                            Pagado el {formatDate(r.payment.date, { day: "2-digit", month: "short" })} (
-                            {formatMoney(r.payment.amount, r.wallet?.currencyCode ?? r.currencyCode)})
-                          </span>
+                          <>
+                            <span className="text-xs text-positive">
+                              Pagado el {formatDate(r.payment.date, { day: "2-digit", month: "short" })} con{" "}
+                              {r.payment.wallet.name} ({formatMoney(r.payment.amount, r.payment.wallet.currencyCode)})
+                            </span>
+                            <ConfirmButton
+                              action={unpayRecurring.bind(null, r.id, month)}
+                              confirm="¿Deshacer este pago? Se eliminará el movimiento registrado."
+                              variant="ghost"
+                              className="h-8 text-xs text-muted"
+                            >
+                              Deshacer
+                            </ConfirmButton>
+                          </>
                         ) : (
                           r.active && (
                             <ActionForm
@@ -104,7 +114,14 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                   </option>
                                 ))}
                               </Select>
-                              <Input name="amount" defaultValue={r.amount.toFixed(2)} inputMode="decimal" className="h-8 w-28 text-xs" />
+                              <Input name="amount" defaultValue={r.amount.toFixed(2)} inputMode="decimal" className="h-8 w-24 text-xs" />
+                              <Select name="amountCurrency" defaultValue={r.currencyCode} className="h-8 w-20 text-xs">
+                                {CURRENCIES.map((c) => (
+                                  <option key={c.value} value={c.value}>
+                                    {c.value}
+                                  </option>
+                                ))}
+                              </Select>
                               <Input name="date" type="date" defaultValue={toISODate(r.dueDate)} className="h-8 w-36 text-xs" />
                               <SubmitButton variant="secondary" className="h-8 text-xs">
                                 Marcar pagado

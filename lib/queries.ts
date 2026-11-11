@@ -218,7 +218,10 @@ export async function getRecurringForMonth(userId: string, month: string) {
       wallet: { select: { id: true, name: true, currencyCode: true } },
       category: { select: { id: true, name: true } },
       business: { select: { id: true, name: true } },
-      transactions: { where: { date: { gte: start, lt: end } }, select: { id: true, date: true, amount: true } },
+      transactions: {
+        where: { date: { gte: start, lt: end } },
+        select: { id: true, date: true, amount: true, wallet: { select: { name: true, currencyCode: true } } },
+      },
     },
     orderBy: [{ active: "desc" }, { dayOfMonth: "asc" }],
   });
