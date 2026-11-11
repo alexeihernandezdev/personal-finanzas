@@ -1,8 +1,9 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { notFound } from "next/navigation";
 import { TransactionForm } from "@/components/transaction-form";
-import { Card, PageHeader } from "@/components/ui";
+import { buttonClass, Card, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { getCurrentRates, serializeRates } from "@/lib/rates";
@@ -27,7 +28,16 @@ async function EditarMovimientoPageContent({ params }: PageProps<"/movimientos/[
 
   return (
     <>
-      <PageHeader title="Editar movimiento" />
+      <PageHeader
+        title="Editar movimiento"
+        actions={
+          tx.type === "INCOME" && (
+            <Link href={`/presupuesto?repartir=${tx.id}`} className={buttonClass("secondary")}>
+              Repartir en apartados
+            </Link>
+          )
+        }
+      />
       <Card className="max-w-2xl">
         <TransactionForm
           action={updateTransaction.bind(null, tx.id)}

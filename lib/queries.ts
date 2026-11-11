@@ -1,14 +1,14 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import type { Prisma, TransactionType } from "@/lib/generated/prisma/client";
-import { convert, dec, Decimal, INFLOW_TYPES } from "@/lib/money";
+import { convert, dec, Decimal, INFLOW_TYPES, type DecimalLike } from "@/lib/money";
 import { monthRange } from "@/lib/utils";
 import { computeBudget } from "@/lib/budget";
 
 // Todas las funciones reciben el userId ya verificado por requireUser().
 
 export async function getWalletsWithBalance(userId: string, opts: { includeArchived?: boolean } = {}) {
-  const [wallets, sums, pockets] = await Promise.all([
+  const [wallets, sums] = await Promise.all([
     prisma.wallet.findMany({
       where: { userId, ...(opts.includeArchived ? {} : { archived: false }) },
       orderBy: [{ archived: "asc" }, { createdAt: "asc" }],
@@ -18,7 +18,6 @@ export async function getWalletsWithBalance(userId: string, opts: { includeArchi
       where: { userId },
       _sum: { amount: true },
     }),
-    getPocketBalances(userId),
   ]);
   return wallets.map((w) => {
     let balance = dec(w.initialBalance);
@@ -27,30 +26,25 @@ export async function getWalletsWithBalance(userId: string, opts: { includeArchi
       const v = dec(s._sum.amount);
       balance = (INFLOW_TYPES as readonly string[]).includes(s.type) ? balance.add(v) : balance.sub(v);
     }
-    // Lo apartado sigue en la cuenta, pero no está disponible para gastar
-    const reserved = pockets
-      .filter((p) => p.walletId === w.id)
-      .reduce((acc, p) => acc.add(p.balance), new Decimal(0));
-    return { ...w, balance, reserved, available: balance.sub(reserved) };
+    return { ...w, balance };
   });
 }
 
 /** Saldo de cada apartado (suma de sus movimientos). Incluye los archivados: su dinero sigue apartado. */
 async function getPocketBalances(userId: string) {
   const [pockets, sums] = await Promise.all([
-    prisma.pocket.findMany({ where: { userId }, select: { id: true, walletId: true } }),
+    prisma.pocket.findMany({ where: { userId }, select: { id: true, currencyCode: true } }),
     prisma.pocketMovement.groupBy({ by: ["pocketId"], where: { pocket: { userId } }, _sum: { amount: true } }),
   ]);
   return pockets.map((p) => ({ ...p, balance: dec(sums.find((s) => s.pocketId === p.id)?._sum.amount) }));
 }
 
 /** Apartados con su saldo y sus últimos movimientos. */
-export async function getPockets(userId: string, opts: { id?: string; walletId?: string } = {}) {
+export async function getPockets(userId: string, opts: { id?: string } = {}) {
   const [pockets, balances] = await Promise.all([
     prisma.pocket.findMany({
-      where: { userId, ...(opts.id ? { id: opts.id } : {}), ...(opts.walletId ? { walletId: opts.walletId } : {}) },
+      where: { userId, ...(opts.id ? { id: opts.id } : {}) },
       include: {
-        wallet: { select: { id: true, name: true, currencyCode: true, color: true } },
         business: { select: { id: true, name: true, color: true } },
         movements: { orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 10 },
       },
@@ -59,6 +53,25 @@ export async function getPockets(userId: string, opts: { id?: string; walletId?:
     getPocketBalances(userId),
   ]);
   return pockets.map((p) => ({ ...p, balance: balances.find((b) => b.id === p.id)?.balance ?? new Decimal(0) }));
+}
+
+/**
+ * Dinero en cuentas, lo apartado y lo disponible para usar, en `currency`.
+ * Los apartados no están ligados a una cuenta: se restan del total de todas.
+ */
+export async function getMoneySummary(userId: string, currency: string, vesPerUsd: DecimalLike | null | undefined) {
+  const [wallets, pockets] = await Promise.all([getWalletsWithBalance(userId), getPocketBalances(userId)]);
+  const sum = (values: { amount: Decimal; currency: string }[]) =>
+    values.reduce((acc, v) => {
+      try {
+        return acc.add(convert(v.amount, v.currency, currency, vesPerUsd));
+      } catch {
+        return acc;
+      }
+    }, new Decimal(0));
+  const total = sum(wallets.map((w) => ({ amount: w.balance, currency: w.currencyCode })));
+  const reserved = sum(pockets.map((p) => ({ amount: p.balance, currency: p.currencyCode })));
+  return { total, reserved, available: total.sub(reserved) };
 }
 
 export type PocketWithBalance = Awaited<ReturnType<typeof getPockets>>[number];
@@ -257,6 +270,17 @@ export function getRecurringIncome(userId: string) {
 
 export function getBudgetBuckets(userId: string) {
   return prisma.budgetBucket.findMany({ where: { userId }, orderBy: [{ position: "asc" }, { createdAt: "asc" }] });
+}
+
+/** Últimos ingresos, para repartirlos entre los apartados del presupuesto. `distributed`: ya se repartió algo. */
+export async function getRecentIncomes(userId: string, take = 30) {
+  const items = await prisma.transaction.findMany({
+    where: { userId, type: "INCOME" },
+    include: { wallet: { select: { name: true, currencyCode: true } }, _count: { select: { pocketMovements: true } } },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    take,
+  });
+  return items.map(({ _count, ...t }) => ({ ...t, distributed: _count.pocketMovements > 0 }));
 }
 
 /**

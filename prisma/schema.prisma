@@ -67,12 +67,11 @@ model Wallet {
   archived       Boolean    @default(false)
   createdAt      DateTime   @default(now())
 
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  currency     Currency           @relation(fields: [currencyCode], references: [code])
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency        Currency           @relation(fields: [currencyCode], references: [code])
   transactions    Transaction[]
   recurring       RecurringExpense[]
   recurringIncome RecurringIncome[]
-  pockets         Pocket[]
 
   @@index([userId])
 }
@@ -105,13 +104,13 @@ model Business {
   color    String  @default("#6366f1")
   archived Boolean @default(false)
 
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   splits          TransactionSplit[]
   recurring       RecurringExpense[]
   recurringIncome RecurringIncome[]
   receivables     Receivable[]
-  debts       Debt[]
-  pockets     Pocket[]
+  debts           Debt[]
+  pockets         Pocket[]
 
   @@unique([userId, name])
 }
@@ -154,13 +153,14 @@ model Transaction {
   rateSource      RateSource?
   createdAt       DateTime        @default(now())
 
-  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet     Wallet             @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  category   Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  receivable Receivable?        @relation(fields: [receivableId], references: [id], onDelete: SetNull)
-  debt       Debt?              @relation(fields: [debtId], references: [id], onDelete: SetNull)
-  recurring  RecurringExpense?  @relation(fields: [recurringId], references: [id], onDelete: SetNull)
-  splits     TransactionSplit[]
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet          Wallet             @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  category        Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  receivable      Receivable?        @relation(fields: [receivableId], references: [id], onDelete: SetNull)
+  debt            Debt?              @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  recurring       RecurringExpense?  @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  splits          TransactionSplit[]
+  pocketMovements PocketMovement[]
 
   @@index([userId, date])
   @@index([walletId])
@@ -255,9 +255,12 @@ model BudgetBucket {
   percent   Decimal  @db.Decimal(5, 2)
   color     String   @default("#6366f1")
   position  Int      @default(0)
+  // Apartado al que va su porcentaje cuando se reparte un ingreso
+  pocketId  String?
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pocket Pocket? @relation(fields: [pocketId], references: [id], onDelete: SetNull)
 
   @@index([userId])
 }
@@ -338,36 +341,39 @@ enum PocketKind {
 model Pocket {
   id           String     @id @default(cuid())
   userId       String
-  walletId     String
+  currencyCode String // Divisa del apartado; no está ligado a ninguna cuenta
   name         String
   kind         PocketKind @default(SAVINGS)
   businessId   String? // null = Personal
-  targetAmount Decimal?   @db.Decimal(20, 8) // en la divisa de la cuenta
+  targetAmount Decimal?   @db.Decimal(20, 8) // en la divisa del apartado
   targetDate   DateTime?  @db.Date
   color        String     @default("#0f766e")
   archived     Boolean    @default(false)
   createdAt    DateTime   @default(now())
 
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet    Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  business  Business?        @relation(fields: [businessId], references: [id], onDelete: SetNull)
-  movements PocketMovement[]
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business      Business?        @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  movements     PocketMovement[]
+  budgetBuckets BudgetBucket[]
 
   @@index([userId])
-  @@index([walletId])
 }
 
 model PocketMovement {
-  id          String   @id @default(cuid())
-  pocketId    String
-  amount      Decimal  @db.Decimal(20, 8) // + apartar, − liberar
-  date        DateTime @db.Date
-  description String   @default("")
-  createdAt   DateTime @default(now())
+  id                  String   @id @default(cuid())
+  pocketId            String
+  amount              Decimal  @db.Decimal(20, 8) // + apartar, − liberar
+  date                DateTime @db.Date
+  description         String   @default("")
+  // Ingreso del que salió (al repartir un ingreso según el presupuesto)
+  sourceTransactionId String?
+  createdAt           DateTime @default(now())
 
-  pocket Pocket @relation(fields: [pocketId], references: [id], onDelete: Cascade)
+  pocket            Pocket       @relation(fields: [pocketId], references: [id], onDelete: Cascade)
+  sourceTransaction Transaction? @relation(fields: [sourceTransactionId], references: [id], onDelete: SetNull)
 
   @@index([pocketId])
+  @@index([sourceTransactionId])
 }
 
 // ─── Tasas de cambio (global) ────────────────────────────────────────────────

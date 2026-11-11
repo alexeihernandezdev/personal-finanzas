@@ -130,6 +130,7 @@ export const budgetBucketSchema = z.object({
       return n;
     }),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  pocketId: optionalId,
 });
 
 export const fixedBufferSchema = z.object({
@@ -196,7 +197,7 @@ export const debtTransactionEditSchema = z.object({
 export const pocketSchema = z.object({
   name: z.string({ error: "Escribe un nombre" }).min(1).max(60),
   kind: z.enum(["SAVINGS", "GOAL", "EMERGENCY", "RESERVE"]),
-  walletId: z.string({ error: "Elige la cuenta donde está el dinero" }),
+  currencyCode,
   businessId: optionalId,
   targetAmount: amount("La meta").optional(),
   targetDate: isoDate.optional(),

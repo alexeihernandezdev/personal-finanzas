@@ -1,4 +1,5 @@
 import { Field, Input, Select } from "@/components/ui";
+import { CURRENCIES } from "@/components/wallet-fields";
 
 export const POCKET_KINDS = [
   { value: "SAVINGS", label: "Ahorro" },
@@ -12,21 +13,22 @@ export function pocketKindLabel(kind: string) {
 }
 
 export function PocketFields({
-  wallets,
   businesses,
   defaults,
+  currencyLocked,
 }: {
-  wallets: { id: string; name: string; currencyCode: string; availableLabel: string }[];
   businesses: { id: string; name: string }[];
   defaults?: {
     name: string;
     kind: string;
-    walletId: string;
+    currencyCode: string;
     businessId: string;
     targetAmount: string;
     targetDate: string;
     color: string;
   };
+  // Con dinero apartado no se puede cambiar la divisa
+  currencyLocked?: boolean;
 }) {
   return (
     <>
@@ -52,14 +54,15 @@ export function PocketFields({
           ))}
         </Select>
       </Field>
-      <Field label="Cuenta donde está el dinero">
-        <Select name="walletId" required defaultValue={defaults?.walletId}>
-          {wallets.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name} ({w.currencyCode}) · disp. {w.availableLabel}
+      <Field label="Moneda" hint={currencyLocked ? "Libera el dinero del apartado para cambiarla" : undefined}>
+        <Select name="currencyCode" defaultValue={defaults?.currencyCode ?? "USD"} disabled={currencyLocked}>
+          {CURRENCIES.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
             </option>
           ))}
         </Select>
+        {currencyLocked && <input type="hidden" name="currencyCode" value={defaults?.currencyCode} />}
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Meta" hint="Opcional">

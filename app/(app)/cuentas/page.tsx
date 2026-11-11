@@ -6,17 +6,17 @@ import { Amount, Badge, Card, EmptyState, PageHeader, SectionTitle } from "@/com
 import { WalletFields, walletTypeLabel } from "@/components/wallet-fields";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getWalletsWithBalance } from "@/lib/queries";
+import { getMoneySummary, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { createWallet } from "./actions";
 
 async function CuentasPageContent() {
   const user = await requireUser();
-  const [wallets, rates] = await Promise.all([
+  const rate = pickRate(await getCurrentRates(), user.preferredRateSource);
+  const [wallets, summary] = await Promise.all([
     getWalletsWithBalance(user.id, { includeArchived: true }),
-    getCurrentRates(),
+    getMoneySummary(user.id, user.displayCurrency, rate),
   ]);
-  const rate = pickRate(rates, user.preferredRateSource);
   const active = wallets.filter((w) => !w.archived);
   const archived = wallets.filter((w) => w.archived);
   const sumDisplay = (pick: (w: (typeof active)[number]) => Decimal) =>
@@ -28,7 +28,7 @@ async function CuentasPageContent() {
       }
     }, new Decimal(0));
   const total = sumDisplay((w) => w.balance);
-  const available = sumDisplay((w) => w.available);
+  const { available } = summary;
 
   return (
     <>
@@ -80,8 +80,6 @@ function WalletCard({
     currencyCode: string;
     color: string;
     balance: Decimal;
-    reserved: Decimal;
-    available: Decimal;
   };
 }) {
   return (
@@ -98,12 +96,6 @@ function WalletCard({
         <p className="mt-4 text-2xl font-semibold">
           <Amount value={formatMoney(wallet.balance, wallet.currencyCode)} />
         </p>
-        {!wallet.reserved.isZero() && (
-          <p className="mt-1 text-xs tabular text-muted">
-            Disponible <Amount value={formatMoney(wallet.available, wallet.currencyCode)} /> · Apartado{" "}
-            {formatMoney(wallet.reserved, wallet.currencyCode)}
-          </p>
-        )}
       </Card>
     </Link>
   );

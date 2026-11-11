@@ -4,7 +4,7 @@ import { Pencil } from "lucide-react";
 import { useState } from "react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Modal } from "@/components/modal";
-import { Field, Input } from "@/components/ui";
+import { Field, Input, Select } from "@/components/ui";
 import { deleteBudgetBucket, updateBudgetBucket, updateFixedBuffer } from "./actions";
 
 function EditButton({ label, onClick }: { label: string; onClick: () => void }) {
@@ -30,7 +30,31 @@ function PercentInput({ defaultValue, required }: { defaultValue: string; requir
   );
 }
 
-export function EditBucketButton({ bucket }: { bucket: { id: string; name: string; percent: string; color: string } }) {
+export type PocketOption = { id: string; name: string; currencyCode: string };
+
+/** Apartado al que va el dinero de la partida cuando se reparte un ingreso. */
+export function PocketSelect({ pockets, defaultValue }: { pockets: PocketOption[]; defaultValue?: string | null }) {
+  return (
+    <Field label="Apartado" hint="A dónde va su parte cuando repartes un ingreso">
+      <Select name="pocketId" defaultValue={defaultValue ?? ""}>
+        <option value="">Sin apartado</option>
+        {pockets.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name} · {p.currencyCode}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+export function EditBucketButton({
+  bucket,
+  pockets,
+}: {
+  bucket: { id: string; name: string; percent: string; color: string; pocketId: string | null };
+  pockets: PocketOption[];
+}) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
 
@@ -55,6 +79,7 @@ export function EditBucketButton({ bucket }: { bucket: { id: string; name: strin
               <Input name="color" type="color" defaultValue={bucket.color} className="w-12 p-1" />
             </Field>
           </div>
+          <PocketSelect pockets={pockets} defaultValue={bucket.pocketId} />
           <SubmitButton>Guardar</SubmitButton>
         </ActionForm>
         <ConfirmButton

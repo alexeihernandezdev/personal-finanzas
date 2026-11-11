@@ -9,6 +9,7 @@ import { formatPercent } from "@/lib/budget";
 import {
   getBudgetOverview,
   getDebts,
+  getMoneySummary,
   getMonthSummary,
   getReceivables,
   getRecurringForMonth,
@@ -23,7 +24,7 @@ async function DashboardPageContent() {
   const month = currentMonth();
   const rates = await getCurrentRates({ refreshIfStale: true });
   const rate = pickRate(rates, user.preferredRateSource);
-  const [wallets, summary, recurring, receivables, debts, recent, budget] = await Promise.all([
+  const [wallets, summary, recurring, receivables, debts, recent, budget, money] = await Promise.all([
     getWalletsWithBalance(user.id),
     getMonthSummary(user.id, month, rate),
     getRecurringForMonth(user.id, month),
@@ -31,6 +32,7 @@ async function DashboardPageContent() {
     getDebts(user.id, { onlyOpen: true }),
     listTransactions(user.id, {}, 8),
     getBudgetOverview(user.id, user.displayCurrency, rate),
+    getMoneySummary(user.id, user.displayCurrency, rate),
   ]);
 
   const cur = user.displayCurrency;
@@ -42,7 +44,6 @@ async function DashboardPageContent() {
     }
   };
   const walletTotal = wallets.reduce((acc, w) => acc.add(toDisplay(w.balance, w.currencyCode)), new Decimal(0));
-  const reservedTotal = wallets.reduce((acc, w) => acc.add(toDisplay(w.reserved, w.currencyCode)), new Decimal(0));
   const receivableTotal = receivables.reduce((acc, r) => acc.add(toDisplay(r.remaining, r.currencyCode)), new Decimal(0));
   const debtTotal = debts.reduce((acc, d) => acc.add(toDisplay(d.remaining, d.currencyCode)), new Decimal(0));
   // Patrimonio neto: lo que tienes + lo que te deben − lo que debes
@@ -87,12 +88,12 @@ async function DashboardPageContent() {
               <span>Deudas</span>
               <span className={debtTotal.gt(0) ? "text-negative" : undefined}>− {formatMoney(debtTotal, cur)}</span>
             </p>
-            {reservedTotal.gt(0) && (
+            {money.reserved.gt(0) && (
               <p className="flex justify-between border-t border-border pt-1 font-medium text-foreground">
                 <Link href="/apartados" className="hover:underline">
                   Disponible para usar
                 </Link>
-                <Amount value={formatMoney(walletTotal.sub(reservedTotal), cur)} />
+                <Amount value={formatMoney(money.available, cur)} />
               </p>
             )}
           </div>
@@ -150,11 +151,6 @@ async function DashboardPageContent() {
                         <Badge>{w.currencyCode}</Badge>
                         <span className="w-36 text-right">
                           <Amount className="block text-sm font-medium" value={formatMoney(w.balance, w.currencyCode)} />
-                          {!w.reserved.isZero() && (
-                            <span className="block text-xs tabular text-muted">
-                              disp. {formatMoney(w.available, w.currencyCode)}
-                            </span>
-                          )}
                         </span>
                       </Link>
                     </li>

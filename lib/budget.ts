@@ -1,6 +1,6 @@
 import { dec, Decimal, type DecimalLike } from "@/lib/money";
 
-export type BudgetBucketInput = { id: string; name: string; percent: DecimalLike; color: string };
+export type BudgetBucketInput = { id: string; name: string; percent: DecimalLike; color: string; pocketId?: string | null };
 
 /** Partidas sugeridas para empezar (porcentaje de los ingresos fijos). */
 export const SUGGESTED_BUCKETS = [

@@ -7,17 +7,27 @@ import { Card, EmptyState, Field, Input, PageHeader, SectionTitle } from "@/comp
 import { formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { Decimal, formatMoney } from "@/lib/money";
-import { getBudgetOverview } from "@/lib/queries";
+import { getBudgetOverview, getPockets, getRecentIncomes } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { createBudgetBucket, createSuggestedBuckets, moveBudgetBucket } from "./actions";
-import { EditBucketButton, EditBufferButton } from "./edit-dialogs";
+import { DistributeIncomeButton } from "./distribute-income";
+import { EditBucketButton, EditBufferButton, PocketSelect, type PocketOption } from "./edit-dialogs";
 
-async function PresupuestoPageContent() {
+async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto">) {
+  const { repartir } = await searchParams;
   const user = await requireUser();
   const rates = await getCurrentRates();
   const rate = pickRate(rates, user.preferredRateSource);
-  const budget = await getBudgetOverview(user.id, user.displayCurrency, rate);
+  const [budget, pockets, incomes] = await Promise.all([
+    getBudgetOverview(user.id, user.displayCurrency, rate),
+    getPockets(user.id),
+    getRecentIncomes(user.id),
+  ]);
+  const pocketOptions: PocketOption[] = pockets
+    .filter((p) => !p.archived)
+    .map((p) => ({ id: p.id, name: p.name, currencyCode: p.currencyCode }));
+  const pocketById = new Map(pockets.filter((p) => !p.archived).map((p) => [p.id, p]));
   const cur = user.displayCurrency;
   const noIncome = budget.income.isZero();
 
@@ -118,14 +128,22 @@ async function PresupuestoPageContent() {
               {budget.buckets.map((b, i) => (
                 <li key={b.id} className="flex items-center gap-3 py-2.5 text-sm">
                   <span className="size-3 shrink-0 rounded-full" style={{ background: b.color }} />
-                  <span className="min-w-0 flex-1 truncate font-medium">{b.name}</span>
+                  <span className="min-w-0 flex-1 font-medium">
+                    <span className="block truncate">{b.name}</span>
+                    {b.pocketId && pocketById.has(b.pocketId) && (
+                      <span className="block truncate text-xs font-normal text-muted">
+                        → {pocketById.get(b.pocketId)!.name}
+                      </span>
+                    )}
+                  </span>
                   <span className="w-16 text-right tabular text-muted">{formatPercent(b.percent)}</span>
                   <span className="w-28 text-right tabular">{formatMoney(b.amount, cur)}</span>
                   <span className={rowActions}>
                     <MoveButton id={b.id} direction="up" disabled={i === 0} />
                     <MoveButton id={b.id} direction="down" disabled={i === budget.buckets.length - 1} />
                     <EditBucketButton
-                      bucket={{ id: b.id, name: b.name, percent: b.percent.toString(), color: b.color }}
+                      bucket={{ id: b.id, name: b.name, percent: b.percent.toString(), color: b.color, pocketId: b.pocketId ?? null }}
+                      pockets={pocketOptions}
                     />
                   </span>
                 </li>
@@ -146,6 +164,35 @@ async function PresupuestoPageContent() {
         </section>
 
         <div className="flex flex-col gap-6">
+          {budget.buckets.length > 0 && (
+            <Card className="h-fit">
+              <h2 className="mb-1 font-semibold">Repartir un ingreso</h2>
+              <p className="mb-4 text-xs text-muted">
+                Elige un ingreso y aparta la parte de cada partida en su apartado. El dinero se queda en tus cuentas.
+              </p>
+              <DistributeIncomeButton
+                initialIncomeId={typeof repartir === "string" ? repartir : undefined}
+                incomes={incomes.map((i) => ({
+                  id: i.id,
+                  label: `${formatDate(i.date, { day: "2-digit", month: "short" })} · ${i.description || "Ingreso"} · ${i.wallet.name}`,
+                  amount: i.amount.toString(),
+                  currency: i.wallet.currencyCode,
+                  distributed: i.distributed,
+                }))}
+                buckets={budget.buckets.map((b) => {
+                  const p = b.pocketId ? pocketById.get(b.pocketId) : undefined;
+                  return {
+                    id: b.id,
+                    name: b.name,
+                    color: b.color,
+                    percent: b.percent.toString(),
+                    pocket: p ? { name: p.name, currency: p.currencyCode } : null,
+                  };
+                })}
+              />
+              {incomes.length === 0 && <p className="mt-2 text-xs text-muted">Aún no tienes ingresos registrados.</p>}
+            </Card>
+          )}
           <Card className="h-fit">
             <h2 className="mb-1 font-semibold">Nueva partida</h2>
             <p className="mb-4 text-xs text-muted">
@@ -164,6 +211,7 @@ async function PresupuestoPageContent() {
                   <Input name="color" type="color" defaultValue="#6366f1" className="w-12 p-1" />
                 </Field>
               </div>
+              <PocketSelect pockets={pocketOptions} />
               <SubmitButton>Agregar</SubmitButton>
             </ActionForm>
           </Card>
@@ -232,10 +280,10 @@ function DistributionBar({ budget }: { budget: BudgetOverview }) {
   );
 }
 
-export default function PresupuestoPage() {
+export default function PresupuestoPage(props: PageProps<"/presupuesto">) {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <PresupuestoPageContent />
+      <PresupuestoPageContent {...props} />
     </Suspense>
   );
 }
