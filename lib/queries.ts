@@ -260,14 +260,15 @@ export function getBudgetBuckets(userId: string) {
 }
 
 /**
- * Presupuesto mensual en la divisa del usuario: ingresos fijos activos, gastos fijos activos y
- * partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
+ * Presupuesto mensual en la divisa del usuario: ingresos fijos activos, gastos fijos activos (más
+ * su colchón) y partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
  */
 export async function getBudgetOverview(userId: string, displayCurrency: string, rate: Decimal | null) {
-  const [incomes, expenses, buckets] = await Promise.all([
+  const [incomes, expenses, buckets, settings] = await Promise.all([
     prisma.recurringIncome.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
     prisma.recurringExpense.findMany({ where: { userId, active: true }, select: { amount: true, currencyCode: true } }),
     getBudgetBuckets(userId),
+    prisma.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } }),
   ]);
   const sum = (list: { amount: Prisma.Decimal; currencyCode: string }[]) =>
     list.reduce((acc, i) => {
@@ -277,7 +278,7 @@ export async function getBudgetOverview(userId: string, displayCurrency: string,
         return acc;
       }
     }, new Decimal(0));
-  return computeBudget(sum(incomes), sum(expenses), buckets);
+  return computeBudget(sum(incomes), sum(expenses), buckets, settings?.fixedBufferPercent ?? 0);
 }
 
 /** Cuentas por cobrar y préstamos con el monto cobrado hasta ahora (en la divisa del registro). */

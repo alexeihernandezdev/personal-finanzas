@@ -9,7 +9,7 @@ import { Decimal, formatMoney } from "@/lib/money";
 import { getBudgetOverview } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn } from "@/lib/utils";
-import { createBudgetBucket, createSuggestedBuckets, deleteBudgetBucket, updateBudgetBucket } from "./actions";
+import { createBudgetBucket, createSuggestedBuckets, deleteBudgetBucket, updateBudgetBucket, updateFixedBuffer } from "./actions";
 
 async function PresupuestoPageContent() {
   const user = await requireUser();
@@ -55,6 +55,12 @@ async function PresupuestoPageContent() {
               Ver gastos fijos
             </Link>
           </p>
+          {budget.buffer.gt(0) && (
+            <p className="text-xs tabular text-muted">
+              Con colchón: {noIncome ? "—" : formatPercent(budget.fixedPercent.add(budget.bufferIncomePercent))} ·{" "}
+              {formatMoney(budget.fixed.add(budget.buffer), cur)}
+            </p>
+          )}
         </Card>
         <Card>
           <p className="text-sm text-muted">Asignado a partidas</p>
@@ -79,8 +85,8 @@ async function PresupuestoPageContent() {
             <DistributionBar budget={budget} />
             {budget.overBudget && !noIncome && (
               <p className="mt-3 rounded-lg bg-negative/10 px-3 py-2 text-sm text-negative">
-                Tus gastos fijos y partidas suman {formatPercent(budget.fixedPercent.add(budget.assignedPercent))} de tus
-                ingresos: te faltan {formatMoney(budget.free.neg(), cur)} al mes.
+                Tus gastos fijos{budget.buffer.gt(0) && ", el colchón"} y partidas suman{" "}
+                {formatPercent(new Decimal(100).sub(budget.freePercent))} de tus ingresos: te faltan {formatMoney(budget.free.neg(), cur)} al mes.
               </p>
             )}
             <ul className="mt-4 divide-y divide-border">
@@ -89,6 +95,32 @@ async function PresupuestoPageContent() {
                 <span className="flex-1 font-medium">Gastos fijos</span>
                 <span className="w-16 text-right tabular text-muted">{noIncome ? "—" : formatPercent(budget.fixedPercent)}</span>
                 <span className="w-32 text-right tabular">{formatMoney(budget.fixed, cur)}</span>
+              </li>
+              <li className="py-2">
+                <ActionForm action={updateFixedBuffer} resetOnSuccess={false} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="size-3 shrink-0 rounded-full bg-muted/50" />
+                  <span className="flex-1 font-medium">
+                    Colchón
+                    <span className="block text-xs font-normal text-muted">Extra sobre tus gastos fijos para imprevistos</span>
+                  </span>
+                  <div className="relative">
+                    <Input
+                      name="percent"
+                      defaultValue={budget.bufferPercent.toString()}
+                      inputMode="decimal"
+                      title="Porcentaje sobre el total de tus gastos fijos"
+                      className="h-8 w-20 pr-6 text-right tabular"
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted">%</span>
+                  </div>
+                  <SubmitButton variant="ghost" className="h-8 text-xs">
+                    Guardar
+                  </SubmitButton>
+                  <span className="w-16 text-right tabular text-muted">
+                    {noIncome ? "—" : formatPercent(budget.bufferIncomePercent)}
+                  </span>
+                  <span className="w-32 text-right tabular">{formatMoney(budget.buffer, cur)}</span>
+                </ActionForm>
               </li>
               {budget.buckets.map((b) => (
                 <li key={b.id} className="flex flex-wrap items-center gap-2 py-2">
@@ -177,15 +209,16 @@ async function PresupuestoPageContent() {
   );
 }
 
-/** Barra apilada: gastos fijos + partidas + libre. Si se pasa del 100%, se escala al total asignado. */
+/** Barra apilada: gastos fijos + colchón + partidas + libre. Si se pasa del 100%, se escala al total asignado. */
 function DistributionBar({ budget }: { budget: BudgetOverview }) {
   if (budget.income.isZero()) {
     return <div className="h-4 rounded-full bg-border" />;
   }
-  const scale = Decimal.max(100, budget.fixedPercent.add(budget.assignedPercent));
+  const scale = Decimal.max(100, new Decimal(100).sub(budget.freePercent));
   const width = (p: Decimal) => `${p.div(scale).mul(100).toNumber()}%`;
   const segments = [
     { key: "fixed", label: "Gastos fijos", percent: budget.fixedPercent, className: "bg-muted" },
+    { key: "buffer", label: "Colchón", percent: budget.bufferIncomePercent, className: "bg-muted/50" },
     ...budget.buckets.map((b) => ({ key: b.id, label: b.name, percent: b.percent, color: b.color })),
   ].filter((s) => s.percent.gt(0));
 

@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { SUGGESTED_BUCKETS } from "@/lib/budget";
-import { budgetBucketSchema } from "@/lib/validators";
+import { budgetBucketSchema, fixedBufferSchema } from "@/lib/validators";
 
 export async function createBudgetBucket(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -38,4 +38,14 @@ export async function createSuggestedBuckets() {
   if (await prisma.budgetBucket.count({ where: { userId: user.id } })) return;
   await prisma.budgetBucket.createMany({ data: SUGGESTED_BUCKETS.map((b) => ({ userId: user.id, ...b })) });
   revalidatePath("/", "layout");
+}
+
+/** Colchón sobre los gastos fijos (% de su total). */
+export async function updateFixedBuffer(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = fixedBufferSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  await prisma.user.update({ where: { id: user.id }, data: { fixedBufferPercent: parsed.data.percent } });
+  revalidatePath("/", "layout");
+  return { ok: true };
 }

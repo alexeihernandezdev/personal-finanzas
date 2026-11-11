@@ -132,6 +132,21 @@ export const budgetBucketSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 });
 
+export const fixedBufferSchema = z.object({
+  percent: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return "0";
+      const n = normalizeAmount(v.replace("%", ""));
+      if (n === null || Number(n) > 100) {
+        ctx.addIssue({ code: "custom", message: "El colchón debe estar entre 0 y 100%" });
+        return z.NEVER;
+      }
+      return n;
+    }),
+});
+
 export const receivableSchema = z.object({
   kind: z.enum(["RECEIVABLE", "LOAN_GIVEN"]),
   counterparty: z.string({ error: "¿Quién te debe?" }).min(1).max(80),

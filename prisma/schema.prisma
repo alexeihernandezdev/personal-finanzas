@@ -21,6 +21,8 @@ model User {
   movementsCurrency   String     @default("USD")
   // Tasa con la que se convierten los movimientos para mostrarlos (la del día del movimiento)
   movementsRateSource RateSource @default(BCV)
+  // Colchón sobre los gastos fijos (% de su total) para cubrir extras e imprevistos
+  fixedBufferPercent  Decimal    @default(0) @db.Decimal(5, 2)
   createdAt           DateTime   @default(now())
 
   wallets          Wallet[]

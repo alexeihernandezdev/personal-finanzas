@@ -13,6 +13,13 @@ describe("computeBudget", () => {
     expect(b.freePercent.toFixed(2)).toBe("25.00");
     expect(b.overBudget).toBe(false);
   });
+  it("suma el colchón como porcentaje de los gastos fijos", () => {
+    const b = computeBudget("1000", "400", [bucket("Ahorro", "20")], "10");
+    expect(b.buffer.toFixed(2)).toBe("40.00");
+    expect(b.bufferIncomePercent.toFixed(2)).toBe("4.00");
+    expect(b.free.toFixed(2)).toBe("360.00");
+    expect(b.freePercent.toFixed(2)).toBe("36.00");
+  });
   it("detecta cuando se asigna más de lo que entra", () => {
     const b = computeBudget("1000", "800", [bucket("Ahorro", "30")]);
     expect(b.free.toFixed(2)).toBe("-100.00");

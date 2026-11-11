@@ -10,33 +10,43 @@ export const SUGGESTED_BUCKETS = [
 ];
 
 /**
- * Reparte los ingresos fijos del mes: los gastos fijos se llevan su porcentaje real, cada partida
- * su porcentaje configurado, y lo que sobra queda libre. Todos los montos en la misma divisa.
+ * Reparte los ingresos fijos del mes: los gastos fijos se llevan su porcentaje real más un colchón
+ * (`bufferPercent` % de los gastos fijos) para extras, cada partida su porcentaje configurado, y lo
+ * que sobra queda libre. Todos los montos en la misma divisa.
  */
-export function computeBudget(income: DecimalLike, fixedExpenses: DecimalLike, buckets: BudgetBucketInput[]) {
+export function computeBudget(
+  income: DecimalLike,
+  fixedExpenses: DecimalLike,
+  buckets: BudgetBucketInput[],
+  bufferPercent: DecimalLike = 0,
+) {
   const inc = dec(income);
   const fixed = dec(fixedExpenses);
   const pct = (part: Decimal) => (inc.isZero() ? new Decimal(0) : part.div(inc).mul(100));
 
-  const fixedPercent = pct(fixed);
+  const buffer = fixed.mul(dec(bufferPercent)).div(100);
   const items = buckets.map((b) => {
     const percent = dec(b.percent);
     return { ...b, percent, amount: inc.mul(percent).div(100) };
   });
   const assignedPercent = items.reduce((acc, b) => acc.add(b.percent), new Decimal(0));
   const assigned = items.reduce((acc, b) => acc.add(b.amount), new Decimal(0));
-  const free = inc.sub(fixed).sub(assigned);
+  const free = inc.sub(fixed).sub(buffer).sub(assigned);
 
   return {
     income: inc,
     fixed,
-    fixedPercent,
+    fixedPercent: pct(fixed),
+    /** Colchón: % configurado sobre los gastos fijos, su monto y lo que representa de los ingresos */
+    bufferPercent: dec(bufferPercent),
+    buffer,
+    bufferIncomePercent: pct(buffer),
     buckets: items,
     assigned,
     assignedPercent,
     free,
-    freePercent: inc.isZero() ? new Decimal(0) : new Decimal(100).sub(fixedPercent).sub(assignedPercent),
-    /** Gastos fijos + partidas superan los ingresos */
+    freePercent: pct(free),
+    /** Gastos fijos + colchón + partidas superan los ingresos */
     overBudget: free.isNegative(),
   };
 }

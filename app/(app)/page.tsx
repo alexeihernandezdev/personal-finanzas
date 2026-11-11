@@ -187,8 +187,8 @@ async function DashboardPageContent() {
                     <span className="tabular text-positive">{formatMoney(budget.income, cur)}</span>
                   </li>
                   <li className="flex items-center justify-between gap-2 px-4 py-2.5">
-                    <span>Gastos fijos</span>
-                    <span className="tabular">{formatPercent(budget.fixedPercent)}</span>
+                    <span>Gastos fijos{budget.buffer.gt(0) && " + colchón"}</span>
+                    <span className="tabular">{formatPercent(budget.fixedPercent.add(budget.bufferIncomePercent))}</span>
                   </li>
                   {budget.buckets.map((b) => (
                     <li key={b.id} className="flex items-center gap-2 px-4 py-2.5">
