@@ -7,6 +7,7 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { SUGGESTED_BUCKETS } from "@/lib/budget";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
 import { convert, dec, Decimal, formatMoney } from "@/lib/money";
+import { ensureMainPocket } from "@/lib/pockets";
 import { getMoneySummary } from "@/lib/queries";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { budgetBucketSchema, fixedBufferSchema, normalizeAmount } from "@/lib/validators";
@@ -24,22 +25,55 @@ async function ownerFrom(userId: string, formData: FormData) {
   return businessId;
 }
 
-/** El apartado elegido debe ser del usuario y estar activo. */
-async function ownsPocket(userId: string, pocketId: string | undefined) {
-  if (!pocketId) return true;
-  return (await prisma.pocket.count({ where: { id: pocketId, userId, archived: false } })) === 1;
+/** Valor del selector de apartado que manda la partida a la Caja de un dueño: `owner:personal` u `owner:<negocioId>`. */
+const OWNER_PREFIX = "owner:";
+
+/**
+ * Apartado destino de una partida. Si se eligió un dueño (p. ej. Personal), se usa su Caja y se crea
+ * si todavía no existe. Devuelve `undefined` si el apartado o el negocio no son del usuario.
+ */
+async function resolveTarget(user: { id: string; displayCurrency: string }, raw: string | undefined) {
+  if (!raw) return null;
+  if (raw.startsWith(OWNER_PREFIX)) {
+    const key = raw.slice(OWNER_PREFIX.length);
+    const businessId = key === "personal" ? null : key;
+    try {
+      await assertOwned(user.id, { businessIds: [businessId] });
+    } catch (e) {
+      if (e instanceof OwnershipError) return undefined;
+      throw e;
+    }
+    const caja = await prisma.$transaction((tx) => ensureMainPocket(tx, user.id, businessId, user.displayCurrency));
+    return caja.id;
+  }
+  const owned = await prisma.pocket.count({ where: { id: raw, userId: user.id, archived: false } });
+  return owned === 1 ? raw : undefined;
+}
+
+/** Lo que entra a la Caja se reparte entre las partidas: entre todas no pueden pasar del 100%. */
+async function exceedsTotal(userId: string, businessId: string | null, percent: string, exceptId?: string) {
+  const others = await prisma.budgetBucket.aggregate({
+    where: { userId, businessId, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    _sum: { percent: true },
+  });
+  const used = dec(others._sum.percent);
+  if (used.add(percent).lte(100)) return null;
+  return fail(`Las partidas de este presupuesto suman ${used.toString()}%: te queda ${Decimal.max(0, new Decimal(100).sub(used)).toString()}%`);
 }
 
 export async function createBudgetBucket(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
   const parsed = budgetBucketSchema.safeParse(formObject(formData));
   if (!parsed.success) return zodError(parsed.error);
-  if (!(await ownsPocket(user.id, parsed.data.pocketId))) return fail("Apartado no encontrado");
   const businessId = await ownerFrom(user.id, formData);
   if (businessId === undefined) return fail("Negocio inválido");
+  const over = await exceedsTotal(user.id, businessId, parsed.data.percent);
+  if (over) return over;
+  const pocketId = await resolveTarget(user, parsed.data.pocketId);
+  if (pocketId === undefined) return fail("Apartado no encontrado");
   const last = await prisma.budgetBucket.aggregate({ where: { userId: user.id, businessId }, _max: { position: true } });
   const position = (last._max.position ?? -1) + 1;
-  await prisma.budgetBucket.create({ data: { userId: user.id, businessId, ...parsed.data, position } });
+  await prisma.budgetBucket.create({ data: { userId: user.id, businessId, ...parsed.data, pocketId, position } });
   revalidatePath("/", "layout");
   return { ok: true, message: "Partida creada" };
 }
@@ -48,12 +82,13 @@ export async function updateBudgetBucket(id: string, _prev: ActionState, formDat
   const user = await requireUser();
   const parsed = budgetBucketSchema.safeParse(formObject(formData));
   if (!parsed.success) return zodError(parsed.error);
-  if (!(await ownsPocket(user.id, parsed.data.pocketId))) return fail("Apartado no encontrado");
-  const { count } = await prisma.budgetBucket.updateMany({
-    where: { id, userId: user.id },
-    data: { ...parsed.data, pocketId: parsed.data.pocketId ?? null },
-  });
-  if (!count) return fail("Partida no encontrada");
+  const bucket = await prisma.budgetBucket.findFirst({ where: { id, userId: user.id }, select: { businessId: true } });
+  if (!bucket) return fail("Partida no encontrada");
+  const over = await exceedsTotal(user.id, bucket.businessId, parsed.data.percent, id);
+  if (over) return over;
+  const pocketId = await resolveTarget(user, parsed.data.pocketId);
+  if (pocketId === undefined) return fail("Apartado no encontrado");
+  await prisma.budgetBucket.update({ where: { id }, data: { ...parsed.data, pocketId } });
   revalidatePath("/", "layout");
   return { ok: true };
 }

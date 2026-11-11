@@ -12,7 +12,7 @@ import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate } from "@/lib/utils";
 import { createBudgetBucket, createSuggestedBuckets, moveBudgetBucket } from "./actions";
 import { DistributeIncomeButton } from "./distribute-income";
-import { EditBucketButton, EditBufferButton, PocketSelect, type PocketOption } from "./edit-dialogs";
+import { EditBucketButton, EditBufferButton, PocketSelect, type OwnerOption, type PocketOption } from "./edit-dialogs";
 
 async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto">) {
   const { repartir, negocio } = await searchParams;
@@ -37,8 +37,11 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
     name: p.name,
     currencyCode: p.currencyCode,
     ownerName: p.business?.name ?? "Personal",
+    ownerKey: p.businessId ?? "personal",
     isMain: p.isMain,
   }));
+  // Una partida puede mandar su parte a otro dueño (su Caja); no a la Caja propia
+  const ownerOptions: OwnerOption[] = tabs.filter((t) => t.key !== currentTab.key);
   const pocketById = new Map(active.map((p) => [p.id, p]));
   const caja = active.find((p) => p.isMain && p.businessId === businessId);
   const cur = user.displayCurrency;
@@ -70,7 +73,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
         <span className="font-medium text-foreground">{caja?.name ?? `la Caja ${currentTab.name}`}</span>, cada
         partida con apartado se lleva su porcentaje automáticamente. Lo demás (gastos fijos, colchón y libre) se queda
         en la Caja.
-        {businessId && " Para pasarte un sueldo, crea una partida que vaya a la Caja Personal."}
+        {businessId && " Para pasarte un sueldo, crea una partida que vaya a Personal."}
       </p>
 
       {noIncome && (
@@ -182,6 +185,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                     <EditBucketButton
                       bucket={{ id: b.id, name: b.name, percent: b.percent.toString(), color: b.color, pocketId: b.pocketId ?? null }}
                       pockets={pocketOptions}
+                      owners={ownerOptions}
                     />
                   </span>
                 </li>
@@ -251,7 +255,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                   <Input name="color" type="color" defaultValue="#6366f1" className="w-12 p-1" />
                 </Field>
               </div>
-              <PocketSelect pockets={pocketOptions} />
+              <PocketSelect pockets={pocketOptions} owners={ownerOptions} />
               <SubmitButton>Agregar</SubmitButton>
             </ActionForm>
           </Card>

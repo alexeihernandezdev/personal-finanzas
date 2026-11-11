@@ -11,6 +11,7 @@ import {
   getDebts,
   getMoneySummary,
   getMonthSummary,
+  getPockets,
   getReceivables,
   getRecurringForMonth,
   getWalletsWithBalance,
@@ -24,7 +25,7 @@ async function DashboardPageContent() {
   const month = currentMonth();
   const rates = await getCurrentRates({ refreshIfStale: true });
   const rate = pickRate(rates, user.preferredRateSource);
-  const [wallets, summary, recurring, receivables, debts, recent, budget, money] = await Promise.all([
+  const [wallets, summary, recurring, receivables, debts, recent, budget, money, pinnedPockets] = await Promise.all([
     getWalletsWithBalance(user.id),
     getMonthSummary(user.id, month, rate),
     getRecurringForMonth(user.id, month),
@@ -33,6 +34,7 @@ async function DashboardPageContent() {
     listTransactions(user.id, {}, 8),
     getBudgetOverview(user.id, user.displayCurrency, rate),
     getMoneySummary(user.id, user.displayCurrency, rate),
+    getPockets(user.id, { pinned: true }),
   ]);
 
   const cur = user.displayCurrency;
@@ -206,6 +208,44 @@ async function DashboardPageContent() {
               </Link>
             </Card>
           </section>
+          {pinnedPockets.length > 0 && (
+            <section>
+              <SectionTitle>Apartados</SectionTitle>
+              <Card className="p-0">
+                <ul className="divide-y divide-border text-sm">
+                  {pinnedPockets.map((p) => {
+                    const target = p.targetAmount ? new Decimal(p.targetAmount.toString()) : null;
+                    const pct = target && target.gt(0) ? Math.min(100, p.balance.div(target).mul(100).toNumber()) : null;
+                    return (
+                      <li key={p.id} className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <span className="size-2.5 rounded-full" style={{ background: p.color }} />
+                          <span className="flex-1 truncate">
+                            {p.name}
+                            {p.business && <span className="text-xs text-muted"> · {p.business.name}</span>}
+                          </span>
+                          <Amount className="tabular font-medium" value={formatMoney(p.balance, p.currencyCode)} />
+                        </div>
+                        {pct !== null && (
+                          <div className="mt-1.5 flex items-center gap-2 pl-[18px]">
+                            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-background">
+                              <div className="h-full" style={{ width: `${pct}%`, background: p.color }} />
+                            </div>
+                            <span className="text-xs tabular text-muted">
+                              {pct.toFixed(0)}% de {formatMoney(target!, p.currencyCode)}
+                            </span>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <Link href="/apartados" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
+                  Ir a apartados
+                </Link>
+              </Card>
+            </section>
+          )}
           <section>
             <SectionTitle>Gastos fijos pendientes</SectionTitle>
             <Card className="p-0">

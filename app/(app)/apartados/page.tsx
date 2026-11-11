@@ -17,6 +17,7 @@ import {
   deletePocketMovement,
   movePocketMoney,
   toggleArchivePocket,
+  togglePinPocket,
   transferPocketMoney,
   updatePocket,
 } from "./actions";
@@ -203,11 +204,22 @@ function PocketCard({
             {p.targetDate && ` · para el ${formatDate(p.targetDate)}`}
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-xl font-semibold">
-            <Amount value={formatMoney(p.balance, currency)} />
-          </p>
-          {target && <p className="text-xs text-muted">de {formatMoney(target, currency)}</p>}
+        <div className="flex items-start gap-1">
+          <div className="text-right">
+            <p className="text-xl font-semibold">
+              <Amount value={formatMoney(p.balance, currency)} />
+            </p>
+            {target && <p className="text-xs text-muted">de {formatMoney(target, currency)}</p>}
+          </div>
+          {!p.archived && (
+            <ConfirmButton
+              action={togglePinPocket.bind(null, p.id)}
+              variant="ghost"
+              className={cn("h-7 px-2 text-xs", p.pinned ? "text-accent" : "text-muted")}
+            >
+              <span title={p.pinned ? "Quitar del inicio" : "Fijar en el inicio"}>{p.pinned ? "★" : "☆"}</span>
+            </ConfirmButton>
+          )}
         </div>
       </div>
       {pct !== null && (

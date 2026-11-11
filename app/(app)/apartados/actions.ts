@@ -209,6 +209,15 @@ export async function toggleArchivePocket(id: string) {
   revalidatePath("/", "layout");
 }
 
+/** Fija o quita el apartado del inicio. */
+export async function togglePinPocket(id: string) {
+  const user = await requireUser();
+  const pocket = await prisma.pocket.findFirst({ where: { id, userId: user.id }, select: { pinned: true } });
+  if (!pocket) return;
+  await prisma.pocket.update({ where: { id }, data: { pinned: !pocket.pinned } });
+  revalidatePath("/", "layout");
+}
+
 /** Borra el apartado; su dinero vuelve a estar disponible. */
 export async function deletePocket(id: string) {
   const user = await requireUser();

@@ -40,10 +40,10 @@ async function getPocketBalances(userId: string) {
 }
 
 /** Apartados con su saldo y sus últimos movimientos. */
-export async function getPockets(userId: string, opts: { id?: string } = {}) {
+export async function getPockets(userId: string, opts: { id?: string; pinned?: boolean } = {}) {
   const [pockets, balances] = await Promise.all([
     prisma.pocket.findMany({
-      where: { userId, ...(opts.id ? { id: opts.id } : {}) },
+      where: { userId, ...(opts.id ? { id: opts.id } : {}), ...(opts.pinned ? { pinned: true, archived: false } : {}) },
       include: {
         business: { select: { id: true, name: true, color: true } },
         movements: { orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 10 },

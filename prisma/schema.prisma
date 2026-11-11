@@ -357,6 +357,7 @@ model Pocket {
   color        String     @default("#0f766e")
   archived     Boolean    @default(false)
   isMain       Boolean    @default(false) // Caja del dueño
+  pinned       Boolean    @default(false) // Se muestra en el inicio
   createdAt    DateTime   @default(now())
 
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
