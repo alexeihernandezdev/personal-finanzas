@@ -12,7 +12,7 @@ import { getBusinesses, getCategories, getRecurringForMonth, getWalletsWithBalan
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { processAutoPayments } from "@/lib/recurring";
 import { cn, currentMonth, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { createRecurring, deleteRecurring, payRecurring, toggleAutoPay, toggleRecurring, unpayRecurring } from "./actions";
+import { createRecurring, deleteRecurring, updateRecurring, payRecurring, toggleAutoPay, toggleRecurring, unpayRecurring } from "./actions";
 
 async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos">) {
   const user = await requireUser();
@@ -69,7 +69,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                 {items.map((r) => {
                   const overdue = r.active && !r.paid && toISODate(r.dueDate) < today;
                   return (
-                    <li key={r.id} className={cn("px-4 py-3", !r.active && "opacity-50")}>
+                    <li key={r.id} className={cn("relative px-4 py-3", !r.active && "opacity-50")}>
                       <div className="flex flex-wrap items-center gap-3">
                         {r.paid ? (
                           <CheckCircle2 className="size-5 text-positive" />
@@ -159,6 +159,17 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                           ))
                         )}
                         <div className="ml-auto flex">
+                          <details className="group">
+                            <summary className="flex h-8 cursor-pointer list-none items-center px-3 text-xs text-muted hover:text-foreground">
+                              Editar
+                            </summary>
+                            <div className="absolute left-4 right-4 z-10 mt-2 rounded-xl border border-border bg-surface p-4 shadow-lg sm:left-auto sm:w-80">
+                              <ActionForm action={updateRecurring.bind(null, r.id)} resetOnSuccess={false} className="flex flex-col gap-3">
+                                <RecurringFields wallets={wallets} categories={categories} businesses={businesses} defaults={r} />
+                                <SubmitButton>Guardar</SubmitButton>
+                              </ActionForm>
+                            </div>
+                          </details>
                           {(r.autoPay || r.walletId) && (
                             <ConfirmButton action={toggleAutoPay.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
                               {r.autoPay ? "Hacer manual" : "Hacer automático"}
@@ -187,71 +198,100 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
         <Card className="h-fit">
           <h2 className="mb-4 font-semibold">Nuevo gasto fijo</h2>
           <ActionForm action={createRecurring} className="flex flex-col gap-3">
-            <Field label="Nombre">
-              <Input name="name" required placeholder="Ej. Alquiler, Internet…" />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Monto">
-                <Input name="amount" required inputMode="decimal" placeholder="0,00" />
-              </Field>
-              <Field label="Divisa">
-                <Select name="currencyCode" defaultValue="USD">
-                  {CURRENCIES.map((c) => (
-                    <option key={c.value} value={c.value}>
-                      {c.value}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            <Field label="Día del mes">
-              <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={1} />
-            </Field>
-            <Field label="Cuenta habitual">
-              <Select name="walletId" defaultValue="">
-                <option value="">—</option>
-                {wallets.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Categoría">
-              <Select name="categoryId" defaultValue="">
-                <option value="">—</option>
-                {categories
-                  .filter((c) => c.kind === "EXPENSE")
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </Select>
-            </Field>
-            <Field label="Negocio">
-              <Select name="businessId" defaultValue="">
-                <option value="">Personal</option>
-                {businesses.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" name="autoPay" className="mt-0.5" />
-              <span>
-                Se cobra automáticamente
-                <span className="block text-xs text-muted">
-                  Se registra solo el día del vencimiento en la cuenta habitual, con la tasa BCV de ese día.
-                </span>
-              </span>
-            </label>
+            <RecurringFields wallets={wallets} categories={categories} businesses={businesses} />
             <SubmitButton>Crear</SubmitButton>
           </ActionForm>
         </Card>
       </div>
+    </>
+  );
+}
+
+type RecurringDefaults = {
+  name: string;
+  amount: Decimal;
+  currencyCode: string;
+  dayOfMonth: number;
+  walletId: string | null;
+  categoryId: string | null;
+  businessId: string | null;
+  autoPay: boolean;
+};
+
+function RecurringFields({
+  wallets,
+  categories,
+  businesses,
+  defaults,
+}: {
+  wallets: { id: string; name: string }[];
+  categories: { id: string; name: string; kind: string }[];
+  businesses: { id: string; name: string }[];
+  defaults?: RecurringDefaults;
+}) {
+  return (
+    <>
+      <Field label="Nombre">
+        <Input name="name" required placeholder="Ej. Alquiler, Internet…" defaultValue={defaults?.name} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Monto">
+          <Input name="amount" required inputMode="decimal" placeholder="0,00" defaultValue={defaults?.amount.toFixed(2)} />
+        </Field>
+        <Field label="Divisa">
+          <Select name="currencyCode" defaultValue={defaults?.currencyCode ?? "USD"}>
+            {CURRENCIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.value}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <Field label="Día del mes">
+        <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={defaults?.dayOfMonth ?? 1} />
+      </Field>
+      <Field label="Cuenta habitual">
+        <Select name="walletId" defaultValue={defaults?.walletId ?? ""}>
+          <option value="">—</option>
+          {wallets.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Categoría">
+        <Select name="categoryId" defaultValue={defaults?.categoryId ?? ""}>
+          <option value="">—</option>
+          {categories
+            .filter((c) => c.kind === "EXPENSE")
+            .map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+        </Select>
+      </Field>
+      <Field label="Negocio">
+        <Select name="businessId" defaultValue={defaults?.businessId ?? ""}>
+          <option value="">Personal</option>
+          {businesses.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" name="autoPay" className="mt-0.5" defaultChecked={defaults?.autoPay} />
+        <span>
+          Se cobra automáticamente
+          <span className="block text-xs text-muted">
+            Se registra solo el día del vencimiento en la cuenta habitual, con la tasa BCV de ese día.
+          </span>
+        </span>
+      </label>
     </>
   );
 }

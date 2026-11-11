@@ -39,6 +39,38 @@ export async function createRecurring(_prev: ActionState, formData: FormData): P
   return { ok: true, message: "Gasto fijo creado" };
 }
 
+export async function updateRecurring(id: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = recurringSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const d = parsed.data;
+  const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
+  if (!r) return fail("Gasto fijo no encontrado");
+  try {
+    await assertOwned(user.id, { walletIds: [d.walletId], categoryId: d.categoryId, businessIds: [d.businessId] });
+  } catch (e) {
+    if (e instanceof OwnershipError) return fail("Cuenta, categoría o negocio inválido");
+    throw e;
+  }
+  // Los pagos ya registrados no cambian; solo aplica a los próximos meses (y al actual si aún no se pagó)
+  await prisma.recurringExpense.update({
+    where: { id },
+    data: {
+      name: d.name,
+      amount: d.amount,
+      currencyCode: d.currencyCode,
+      dayOfMonth: d.dayOfMonth,
+      walletId: d.walletId ?? null,
+      categoryId: d.categoryId ?? null,
+      businessId: d.businessId ?? null,
+      autoPay: d.autoPay,
+    },
+  });
+  if (d.autoPay) await processAutoPayments(user.id);
+  revalidatePath("/", "layout");
+  return { ok: true, message: "Cambios guardados" };
+}
+
 export async function toggleRecurring(id: string) {
   const user = await requireUser();
   const r = await prisma.recurringExpense.findFirst({ where: { id, userId: user.id } });
