@@ -11,6 +11,8 @@ import type { ActionState } from "@/lib/action";
 const settingsSchema = z.object({
   displayCurrency: z.enum(["USD", "VES"]),
   preferredRateSource: z.enum(["BCV", "BINANCE"]),
+  movementsCurrency: z.enum(["USD", "ORIGINAL"]),
+  movementsRateSource: z.enum(["BCV", "BINANCE"]),
 });
 
 async function saveSettings(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -41,6 +43,24 @@ async function AjustesPageContent() {
             hint="Se usa para convertir entre USD y VES y se guarda en cada movimiento nuevo"
           >
             <Select name="preferredRateSource" defaultValue={user.preferredRateSource}>
+              <option value="BCV">BCV (oficial)</option>
+              <option value="BINANCE">Binance P2P (promedio compra/venta)</option>
+            </Select>
+          </Field>
+          <Field
+            label="Ver movimientos en"
+            hint="Los movimientos se registran en la divisa de la cuenta; aquí eliges cómo verlos"
+          >
+            <Select name="movementsCurrency" defaultValue={user.movementsCurrency}>
+              <option value="USD">Dólares (USD)</option>
+              <option value="ORIGINAL">Moneda de la cuenta</option>
+            </Select>
+          </Field>
+          <Field
+            label="Tasa para ver movimientos en dólares"
+            hint="Se usa la tasa del día de cada movimiento"
+          >
+            <Select name="movementsRateSource" defaultValue={user.movementsRateSource}>
               <option value="BCV">BCV (oficial)</option>
               <option value="BINANCE">Binance P2P (promedio compra/venta)</option>
             </Select>

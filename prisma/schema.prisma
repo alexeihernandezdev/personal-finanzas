@@ -17,6 +17,10 @@ model User {
   image               String?
   displayCurrency     String     @default("USD")
   preferredRateSource RateSource @default(BCV)
+  // Cómo se muestran los movimientos: "USD" (convertidos) u "ORIGINAL" (divisa de la cuenta)
+  movementsCurrency   String     @default("USD")
+  // Tasa con la que se convierten los movimientos para mostrarlos (la del día del movimiento)
+  movementsRateSource RateSource @default(BCV)
   createdAt           DateTime   @default(now())
 
   wallets          Wallet[]

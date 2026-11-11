@@ -17,7 +17,15 @@ export const requireUser = cache(async () => {
   if (!id) redirect("/login");
   const user = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, name: true, email: true, displayCurrency: true, preferredRateSource: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      displayCurrency: true,
+      preferredRateSource: true,
+      movementsCurrency: true,
+      movementsRateSource: true,
+    },
   });
   if (!user) redirect("/login");
   return user;

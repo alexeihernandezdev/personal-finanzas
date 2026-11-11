@@ -3,19 +3,24 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
-import { TransactionList } from "@/components/transaction-list";
+import { TransactionList, type MovementsCurrency } from "@/components/transaction-list";
 import { Amount, Badge, buttonClass, Card, PageHeader } from "@/components/ui";
 import { WalletFields, walletTypeLabel } from "@/components/wallet-fields";
 import { requireUser } from "@/lib/dal";
 import { formatMoney } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import { getPockets, getWallet, listTransactions } from "@/lib/queries";
 import { deleteWallet, toggleArchiveWallet, updateWallet } from "../actions";
 
-async function CuentaPageContent({ params }: PageProps<"/cuentas/[id]">) {
+async function CuentaPageContent({ params, searchParams }: PageProps<"/cuentas/[id]">) {
   const { id } = await params;
+  const { ver } = await searchParams;
   const user = await requireUser();
   const wallet = await getWallet(user.id, id);
   if (!wallet) notFound();
+  // ?ver=usd | ?ver=cuenta cambia cómo se ven los movimientos; por defecto, el ajuste del usuario
+  const currency: MovementsCurrency =
+    ver === "usd" ? "USD" : ver === "cuenta" ? "ORIGINAL" : (user.movementsCurrency as MovementsCurrency);
   const [transactions, pockets] = await Promise.all([
     listTransactions(user.id, { walletId: id }),
     getPockets(user.id, { walletId: id }),
@@ -65,7 +70,33 @@ async function CuentaPageContent({ params }: PageProps<"/cuentas/[id]">) {
               </div>
             )}
           </Card>
-          <TransactionList transactions={transactions} hideWallet />
+          {wallet.currencyCode !== "USD" && transactions.length > 0 && (
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-medium text-muted">Movimientos</h2>
+              <div className="flex rounded-lg border border-border p-0.5 text-xs font-medium">
+                {(
+                  [
+                    ["cuenta", "ORIGINAL", wallet.currencyCode === "VES" ? "Bs." : wallet.currencyCode],
+                    ["usd", "USD", "USD"],
+                  ] as const
+                ).map(([param, value, label]) => (
+                  <Link
+                    key={param}
+                    href={`/cuentas/${wallet.id}?ver=${param}`}
+                    replace
+                    scroll={false}
+                    className={cn(
+                      "rounded-md px-3 py-1",
+                      currency === value ? "bg-foreground text-background" : "text-muted hover:text-foreground",
+                    )}
+                  >
+                    {label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+          <TransactionList transactions={transactions} hideWallet currency={currency} />
         </div>
         <div className="flex flex-col gap-4">
           <Card>
