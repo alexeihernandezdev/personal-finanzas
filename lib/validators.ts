@@ -145,3 +145,23 @@ export const debtTransactionEditSchema = z.object({
   amount: amount(),
   date: isoDate,
 });
+
+export const pocketSchema = z.object({
+  name: z.string({ error: "Escribe un nombre" }).min(1).max(60),
+  kind: z.enum(["SAVINGS", "GOAL", "EMERGENCY", "RESERVE"]),
+  walletId: z.string({ error: "Elige la cuenta donde está el dinero" }),
+  businessId: optionalId,
+  targetAmount: amount("La meta").optional(),
+  targetDate: isoDate.optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  // Solo al crear: monto que se aparta de entrada
+  initialAmount: amount("El monto inicial").optional(),
+});
+
+export const pocketMovementSchema = z.object({
+  pocketId: z.string(),
+  direction: z.enum(["IN", "OUT"]),
+  amount: amount(),
+  date: isoDate,
+  description: z.string().max(200).optional(),
+});

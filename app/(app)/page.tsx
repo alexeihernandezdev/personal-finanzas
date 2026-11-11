@@ -39,6 +39,7 @@ async function DashboardPageContent() {
     }
   };
   const walletTotal = wallets.reduce((acc, w) => acc.add(toDisplay(w.balance, w.currencyCode)), new Decimal(0));
+  const reservedTotal = wallets.reduce((acc, w) => acc.add(toDisplay(w.reserved, w.currencyCode)), new Decimal(0));
   const receivableTotal = receivables.reduce((acc, r) => acc.add(toDisplay(r.remaining, r.currencyCode)), new Decimal(0));
   const debtTotal = debts.reduce((acc, d) => acc.add(toDisplay(d.remaining, d.currencyCode)), new Decimal(0));
   // Patrimonio neto: lo que tienes + lo que te deben − lo que debes
@@ -83,6 +84,14 @@ async function DashboardPageContent() {
               <span>Deudas</span>
               <span className={debtTotal.gt(0) ? "text-negative" : undefined}>− {formatMoney(debtTotal, cur)}</span>
             </p>
+            {reservedTotal.gt(0) && (
+              <p className="flex justify-between border-t border-border pt-1 font-medium text-foreground">
+                <Link href="/apartados" className="hover:underline">
+                  Disponible para usar
+                </Link>
+                <Amount value={formatMoney(walletTotal.sub(reservedTotal), cur)} />
+              </p>
+            )}
           </div>
         </Card>
         <Card>
@@ -136,7 +145,14 @@ async function DashboardPageContent() {
                         <span className="size-2.5 rounded-full" style={{ background: w.color }} />
                         <span className="flex-1 text-sm font-medium">{w.name}</span>
                         <Badge>{w.currencyCode}</Badge>
-                        <Amount className="w-36 text-right text-sm font-medium" value={formatMoney(w.balance, w.currencyCode)} />
+                        <span className="w-36 text-right">
+                          <Amount className="block text-sm font-medium" value={formatMoney(w.balance, w.currencyCode)} />
+                          {!w.reserved.isZero() && (
+                            <span className="block text-xs tabular text-muted">
+                              disp. {formatMoney(w.available, w.currencyCode)}
+                            </span>
+                          )}
+                        </span>
                       </Link>
                     </li>
                   ))}

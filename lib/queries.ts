@@ -7,7 +7,7 @@ import { monthRange } from "@/lib/utils";
 // Todas las funciones reciben el userId ya verificado por requireUser().
 
 export async function getWalletsWithBalance(userId: string, opts: { includeArchived?: boolean } = {}) {
-  const [wallets, sums] = await Promise.all([
+  const [wallets, sums, pockets] = await Promise.all([
     prisma.wallet.findMany({
       where: { userId, ...(opts.includeArchived ? {} : { archived: false }) },
       orderBy: [{ archived: "asc" }, { createdAt: "asc" }],
@@ -17,6 +17,7 @@ export async function getWalletsWithBalance(userId: string, opts: { includeArchi
       where: { userId },
       _sum: { amount: true },
     }),
+    getPocketBalances(userId),
   ]);
   return wallets.map((w) => {
     let balance = dec(w.initialBalance);
@@ -25,9 +26,41 @@ export async function getWalletsWithBalance(userId: string, opts: { includeArchi
       const v = dec(s._sum.amount);
       balance = (INFLOW_TYPES as readonly string[]).includes(s.type) ? balance.add(v) : balance.sub(v);
     }
-    return { ...w, balance };
+    // Lo apartado sigue en la cuenta, pero no está disponible para gastar
+    const reserved = pockets
+      .filter((p) => p.walletId === w.id)
+      .reduce((acc, p) => acc.add(p.balance), new Decimal(0));
+    return { ...w, balance, reserved, available: balance.sub(reserved) };
   });
 }
+
+/** Saldo de cada apartado (suma de sus movimientos). Incluye los archivados: su dinero sigue apartado. */
+async function getPocketBalances(userId: string) {
+  const [pockets, sums] = await Promise.all([
+    prisma.pocket.findMany({ where: { userId }, select: { id: true, walletId: true } }),
+    prisma.pocketMovement.groupBy({ by: ["pocketId"], where: { pocket: { userId } }, _sum: { amount: true } }),
+  ]);
+  return pockets.map((p) => ({ ...p, balance: dec(sums.find((s) => s.pocketId === p.id)?._sum.amount) }));
+}
+
+/** Apartados con su saldo y sus últimos movimientos. */
+export async function getPockets(userId: string, opts: { id?: string; walletId?: string } = {}) {
+  const [pockets, balances] = await Promise.all([
+    prisma.pocket.findMany({
+      where: { userId, ...(opts.id ? { id: opts.id } : {}), ...(opts.walletId ? { walletId: opts.walletId } : {}) },
+      include: {
+        wallet: { select: { id: true, name: true, currencyCode: true, color: true } },
+        business: { select: { id: true, name: true, color: true } },
+        movements: { orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 10 },
+      },
+      orderBy: [{ archived: "asc" }, { createdAt: "asc" }],
+    }),
+    getPocketBalances(userId),
+  ]);
+  return pockets.map((p) => ({ ...p, balance: balances.find((b) => b.id === p.id)?.balance ?? new Decimal(0) }));
+}
+
+export type PocketWithBalance = Awaited<ReturnType<typeof getPockets>>[number];
 
 export type WalletWithBalance = Awaited<ReturnType<typeof getWalletsWithBalance>>[number];
 

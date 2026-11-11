@@ -5,6 +5,7 @@ import { TransactionForm } from "@/components/transaction-form";
 import { Card, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
+import { getCurrentRates, serializeRates } from "@/lib/rates";
 import { getBusinesses, getCategories, getWalletsWithBalance } from "@/lib/queries";
 import { toISODate, todayISO } from "@/lib/utils";
 import { updateTransaction } from "../actions";
@@ -17,10 +18,11 @@ async function EditarMovimientoPageContent({ params }: PageProps<"/movimientos/[
     include: { splits: true },
   });
   if (!tx) notFound();
-  const [wallets, categories, businesses] = await Promise.all([
+  const [wallets, categories, businesses, rates] = await Promise.all([
     getWalletsWithBalance(user.id, { includeArchived: true }),
     getCategories(user.id),
     getBusinesses(user.id),
+    getCurrentRates(),
   ]);
 
   return (
@@ -33,6 +35,8 @@ async function EditarMovimientoPageContent({ params }: PageProps<"/movimientos/[
           categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
           businesses={businesses.map((b) => ({ id: b.id, name: b.name, color: b.color }))}
           today={todayISO()}
+          rates={serializeRates(rates)}
+          rateSource={user.preferredRateSource}
           defaults={{
             type: tx.type as "INCOME" | "EXPENSE",
             walletId: tx.walletId,

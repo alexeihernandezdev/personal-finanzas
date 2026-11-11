@@ -10,6 +10,7 @@ import {
   HandCoins,
   LayoutDashboard,
   ListOrdered,
+  PiggyBank,
   Receipt,
   Settings,
   Store,
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 export const NAV = [
   { href: "/", label: "Inicio", icon: LayoutDashboard },
   { href: "/cuentas", label: "Cuentas", icon: Wallet },
+  { href: "/apartados", label: "Apartados", icon: PiggyBank },
   { href: "/movimientos", label: "Movimientos", icon: ListOrdered },
   { href: "/transferencias", label: "Transferencias", icon: ArrowLeftRight },
   { href: "/gastos-fijos", label: "Gastos fijos", icon: CalendarClock },

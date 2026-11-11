@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Calculator, Plus, Trash2 } from "lucide-react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
+import { CurrencyConverter, type RatesDTO } from "@/components/currency-converter";
 import { Button, Field, Input, Select } from "@/components/ui";
 import type { ActionState } from "@/lib/action";
 import { dec, Decimal, formatMoney, splitByPercent } from "@/lib/money";
@@ -16,6 +17,8 @@ type Props = {
   categories: (Option & { kind: "INCOME" | "EXPENSE" })[];
   businesses: (Option & { color: string })[];
   today: string;
+  rates?: RatesDTO;
+  rateSource?: "BCV" | "BINANCE";
   defaults?: {
     type: "INCOME" | "EXPENSE";
     walletId: string;
@@ -38,6 +41,8 @@ export function TransactionForm({
   categories,
   businesses,
   today,
+  rates,
+  rateSource,
   defaults,
   defaultWalletId,
   submitLabel = "Guardar",
@@ -48,6 +53,7 @@ export function TransactionForm({
   const [walletId, setWalletId] = useState(defaults?.walletId ?? defaultWalletId ?? wallets[0]?.id ?? "");
   const [amount, setAmount] = useState(defaults?.amount ?? "");
   const [splitOn, setSplitOn] = useState(hasRealSplits);
+  const [calcOn, setCalcOn] = useState(false);
   const [mode, setMode] = useState<"percent" | "amount">(hasRealSplits ? "amount" : "percent");
   const [rows, setRows] = useState<Row[]>(
     hasRealSplits
@@ -128,6 +134,29 @@ export function TransactionForm({
           onChange={(e) => setAmount(e.target.value)}
         />
       </Field>
+      {rates && (
+        <div className="col-span-full rounded-lg border border-border p-3">
+          <button
+            type="button"
+            onClick={() => setCalcOn(!calcOn)}
+            className="flex items-center gap-2 text-sm font-medium"
+          >
+            <Calculator className="size-4" />
+            {calcOn ? "Ocultar calculadora de divisas" : "Calculadora de divisas"}
+          </button>
+          {calcOn && (
+            <div className="mt-3">
+              <CurrencyConverter
+                key={currency}
+                rates={rates}
+                defaultSource={rateSource}
+                lockTo={currency}
+                onUse={setAmount}
+              />
+            </div>
+          )}
+        </div>
+      )}
       <Field label="Fecha">
         <Input name="date" type="date" required defaultValue={defaults?.date ?? today} />
       </Field>

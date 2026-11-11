@@ -2,14 +2,15 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { RateHistoryChart } from "@/components/charts";
+import { CurrencyConverter } from "@/components/currency-converter";
 import { Card, PageHeader, SectionTitle } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { formatMoney } from "@/lib/money";
-import { getCurrentRates, getRateHistory } from "@/lib/rates";
+import { getCurrentRates, getRateHistory, serializeRates } from "@/lib/rates";
 import { refreshRatesAction } from "./actions";
 
 async function TasasPageContent() {
-  await requireUser();
+  const user = await requireUser();
   const [rates, history] = await Promise.all([
     getCurrentRates({ refreshIfStale: true }),
     getRateHistory(60),
@@ -61,6 +62,10 @@ async function TasasPageContent() {
           Brecha Binance vs BCV: <strong className="text-foreground">{gap.toFixed(1)}%</strong>
         </p>
       )}
+      <SectionTitle>Calculadora</SectionTitle>
+      <Card className="mb-6">
+        <CurrencyConverter rates={serializeRates(rates)} defaultSource={user.preferredRateSource} />
+      </Card>
       <SectionTitle>Histórico (últimos 60 días)</SectionTitle>
       <Card>
         {chartData.length > 1 ? (

@@ -19,19 +19,22 @@ async function CuentasPageContent() {
   const rate = pickRate(rates, user.preferredRateSource);
   const active = wallets.filter((w) => !w.archived);
   const archived = wallets.filter((w) => w.archived);
-  const total = active.reduce((acc, w) => {
-    try {
-      return acc.add(convert(w.balance, w.currencyCode, user.displayCurrency, rate));
-    } catch {
-      return acc;
-    }
-  }, new Decimal(0));
+  const sumDisplay = (pick: (w: (typeof active)[number]) => Decimal) =>
+    active.reduce((acc, w) => {
+      try {
+        return acc.add(convert(pick(w), w.currencyCode, user.displayCurrency, rate));
+      } catch {
+        return acc;
+      }
+    }, new Decimal(0));
+  const total = sumDisplay((w) => w.balance);
+  const available = sumDisplay((w) => w.available);
 
   return (
     <>
       <PageHeader
         title="Cuentas"
-        description={`Total: ${formatMoney(total, user.displayCurrency)} (tasa ${user.preferredRateSource === "BCV" ? "BCV" : "Binance"})`}
+        description={`Total: ${formatMoney(total, user.displayCurrency)} · Disponible: ${formatMoney(available, user.displayCurrency)} (tasa ${user.preferredRateSource === "BCV" ? "BCV" : "Binance"})`}
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-6">
@@ -70,7 +73,16 @@ async function CuentasPageContent() {
 function WalletCard({
   wallet,
 }: {
-  wallet: { id: string; name: string; type: string; currencyCode: string; color: string; balance: Decimal };
+  wallet: {
+    id: string;
+    name: string;
+    type: string;
+    currencyCode: string;
+    color: string;
+    balance: Decimal;
+    reserved: Decimal;
+    available: Decimal;
+  };
 }) {
   return (
     <Link href={`/cuentas/${wallet.id}`} className="group">
@@ -86,6 +98,12 @@ function WalletCard({
         <p className="mt-4 text-2xl font-semibold">
           <Amount value={formatMoney(wallet.balance, wallet.currencyCode)} />
         </p>
+        {!wallet.reserved.isZero() && (
+          <p className="mt-1 text-xs tabular text-muted">
+            Disponible <Amount value={formatMoney(wallet.available, wallet.currencyCode)} /> · Apartado{" "}
+            {formatMoney(wallet.reserved, wallet.currencyCode)}
+          </p>
+        )}
       </Card>
     </Link>
   );

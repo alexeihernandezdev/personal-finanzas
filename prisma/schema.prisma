@@ -26,6 +26,7 @@ model User {
   recurringExpense RecurringExpense[]
   receivables      Receivable[]
   debts            Debt[]
+  pockets          Pocket[]
 }
 
 // ─── Catálogos ───────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ model Wallet {
   currency     Currency      @relation(fields: [currencyCode], references: [code])
   transactions Transaction[]
   recurring    RecurringExpense[]
+  pockets      Pocket[]
 
   @@index([userId])
 }
@@ -98,6 +100,7 @@ model Business {
   recurring   RecurringExpense[]
   receivables Receivable[]
   debts       Debt[]
+  pockets     Pocket[]
 
   @@unique([userId, name])
 }
@@ -250,6 +253,53 @@ model Debt {
   transactions Transaction[]
 
   @@index([userId, status])
+}
+
+// ─── Apartados (cuentas virtuales) ───────────────────────────────────────────
+// Separan parte del saldo de una cuenta real (ahorro, metas…). El dinero sigue en
+// la cuenta; el apartado solo lo marca como "no disponible".
+// Disponible de una cuenta = saldo − suma de sus apartados.
+
+enum PocketKind {
+  SAVINGS // ahorro
+  GOAL // meta u objetivo
+  EMERGENCY // fondo de emergencia
+  RESERVE // reserva (impuestos, gastos fijos…)
+}
+
+model Pocket {
+  id           String     @id @default(cuid())
+  userId       String
+  walletId     String
+  name         String
+  kind         PocketKind @default(SAVINGS)
+  businessId   String? // null = Personal
+  targetAmount Decimal?   @db.Decimal(20, 8) // en la divisa de la cuenta
+  targetDate   DateTime?  @db.Date
+  color        String     @default("#0f766e")
+  archived     Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet    Wallet           @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  business  Business?        @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  movements PocketMovement[]
+
+  @@index([userId])
+  @@index([walletId])
+}
+
+model PocketMovement {
+  id          String   @id @default(cuid())
+  pocketId    String
+  amount      Decimal  @db.Decimal(20, 8) // + apartar, − liberar
+  date        DateTime @db.Date
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  pocket Pocket @relation(fields: [pocketId], references: [id], onDelete: Cascade)
+
+  @@index([pocketId])
 }
 
 // ─── Tasas de cambio (global) ────────────────────────────────────────────────

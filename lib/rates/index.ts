@@ -71,3 +71,13 @@ export function getRateHistory(days: number) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   return prisma.exchangeRate.findMany({ where: { fetchedAt: { gte: since } }, orderBy: { fetchedAt: "asc" } });
 }
+
+/** Tasas como strings para pasarlas a componentes cliente. */
+export function serializeRates(rates: CurrentRates) {
+  return {
+    bcv: rates.bcv?.toString() ?? null,
+    binance: rates.binance?.toString() ?? null,
+    binanceBuy: rates.binanceBuy?.toString() ?? null,
+    binanceSell: rates.binanceSell?.toString() ?? null,
+  };
+}

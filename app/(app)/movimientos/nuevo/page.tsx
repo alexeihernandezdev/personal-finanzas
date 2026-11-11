@@ -4,6 +4,7 @@ import Link from "next/link";
 import { TransactionForm } from "@/components/transaction-form";
 import { buttonClass, Card, EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
+import { getCurrentRates, serializeRates } from "@/lib/rates";
 import { getBusinesses, getCategories, getWalletsWithBalance } from "@/lib/queries";
 import { todayISO } from "@/lib/utils";
 import { createTransaction } from "../actions";
@@ -11,10 +12,11 @@ import { createTransaction } from "../actions";
 async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimientos/nuevo">) {
   const { cuenta } = await searchParams;
   const user = await requireUser();
-  const [wallets, categories, businesses] = await Promise.all([
+  const [wallets, categories, businesses, rates] = await Promise.all([
     getWalletsWithBalance(user.id),
     getCategories(user.id),
     getBusinesses(user.id),
+    getCurrentRates(),
   ]);
 
   return (
@@ -35,6 +37,8 @@ async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimien
             categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
             businesses={businesses.map((b) => ({ id: b.id, name: b.name, color: b.color }))}
             today={todayISO()}
+          rates={serializeRates(rates)}
+          rateSource={user.preferredRateSource}
             defaultWalletId={typeof cuenta === "string" ? cuenta : undefined}
             submitLabel="Registrar"
           />
