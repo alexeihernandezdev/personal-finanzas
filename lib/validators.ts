@@ -102,6 +102,16 @@ export const recurringSchema = z.object({
   amount: amount(),
   currencyCode,
   dayOfMonth: z.coerce.number().int().min(1, "Día entre 1 y 31").max(31, "Día entre 1 y 31"),
+  // Cada cuántos meses se paga y un mes (yyyy-mm) en que toca pagarlo
+  intervalMonths: z.coerce
+    .number()
+    .refine((v) => [1, 3, 6, 12].includes(v), "Frecuencia inválida")
+    .default(1),
+  startMonth: z
+    .string()
+    .optional()
+    .transform((v) => v || undefined)
+    .pipe(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Mes inválido").optional()),
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
@@ -114,6 +124,9 @@ export const recurringSchema = z.object({
 }).refine((d) => !d.autoPay || d.walletId, {
   message: "Los pagos automáticos necesitan una cuenta habitual",
   path: ["walletId"],
+}).refine((d) => d.intervalMonths === 1 || d.startMonth, {
+  message: "Indica el mes del próximo pago",
+  path: ["startMonth"],
 });
 
 export const recurringIncomeSchema = z.object({

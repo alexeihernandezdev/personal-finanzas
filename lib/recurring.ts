@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/db";
+import { dueDateInMonth, isDueInMonth } from "@/lib/budget";
 import { convert, type DecimalLike } from "@/lib/money";
 import { applyTransactionToPockets, AUTO_POCKET } from "@/lib/pockets";
 import { getRatesForDates } from "@/lib/rates";
@@ -62,7 +63,7 @@ export async function recordRecurringPayment(
 }
 
 /**
- * Registra los gastos fijos automáticos (domiciliados) del mes actual que ya vencieron y aún no
+ * Registra los gastos fijos automáticos (domiciliados) que vencen el mes actual, ya vencieron y aún no
  * tienen pago. Si se omite `userId` procesa todos los usuarios (para el cron).
  * Devuelve cuántos pagos se registraron.
  */
@@ -70,8 +71,6 @@ export async function processAutoPayments(userId?: string) {
   const month = currentMonth();
   const { start, end } = monthRange(month);
   const today = todayISO();
-  const [y, m] = month.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
 
   const items = await prisma.recurringExpense.findMany({
     where: {
@@ -87,8 +86,8 @@ export async function processAutoPayments(userId?: string) {
 
   let created = 0;
   for (const r of items) {
-    if (!r.wallet) continue;
-    const dueDate = new Date(Date.UTC(y, m - 1, Math.min(r.dayOfMonth, daysInMonth)));
+    if (!r.wallet || !isDueInMonth(r, month)) continue;
+    const dueDate = dueDateInMonth(r.dayOfMonth, month);
     const due = toISODate(dueDate);
     // Aún no vence, o venció antes de crear el gasto fijo (ese mes ya se habría pagado aparte)
     if (due > today || due < createdDay.format(r.createdAt)) continue;

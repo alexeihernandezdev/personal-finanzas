@@ -1,7 +1,7 @@
 import "server-only";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { prisma } from "@/lib/db";
-import { nextDueDate, planFixedReserve } from "@/lib/budget";
+import { nextDueDate, planFixedReserve, reserveFraction } from "@/lib/budget";
 import { convert, dec, Decimal, type DecimalLike } from "@/lib/money";
 import { currentMonth, monthRange } from "@/lib/utils";
 
@@ -35,19 +35,19 @@ export async function ensureFixedReservePocket(db: Db, userId: string, businessI
 }
 
 /**
- * Ingreso fijo y gastos fijos (sin colchón) de un dueño al mes, en `currency`. Los montos sin tasa
- * para convertir se omiten.
+ * Ingreso fijo y gastos fijos (sin colchón) de un dueño al mes, en `currency`. Los gastos que no son
+ * mensuales cuentan su parte de cada mes (anual / 12…). Los montos sin tasa para convertir se omiten.
  */
 export async function getMonthlyPlan(db: Db, userId: string, businessId: string | null, currency: string, rate: DecimalLike | null | undefined) {
   const [incomes, expenses, user] = await Promise.all([
     db.recurringIncome.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
-    db.recurringExpense.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
+    db.recurringExpense.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true, intervalMonths: true } }),
     db.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } }),
   ]);
-  const sum = (list: { amount: Prisma.Decimal; currencyCode: string }[]) =>
+  const sum = (list: { amount: Prisma.Decimal; currencyCode: string; intervalMonths?: number }[]) =>
     list.reduce((acc, i) => {
       try {
-        return acc.add(convert(i.amount, i.currencyCode, currency, rate));
+        return acc.add(convert(i.amount, i.currencyCode, currency, rate).div(Math.max(1, i.intervalMonths ?? 1)));
       } catch {
         return acc;
       }
@@ -58,7 +58,8 @@ export async function getMonthlyPlan(db: Db, userId: string, businessId: string 
 /**
  * Reserva de gastos fijos de un dueño: el próximo pago pendiente de cada gasto activo, de qué apartado
  * sale (el suyo o la Caja del dueño), cuánto cubre ya el saldo de ese apartado y cuánto falta
- * (con el colchón). `exclude` descuenta de un apartado un monto que acaba de entrar y aún no cuenta.
+ * (con el colchón). Los gastos que no son mensuales se reservan poco a poco: cada mes un poco más
+ * hasta tenerlos completos el mes anterior al vencimiento. `exclude` descuenta de un apartado un monto que acaba de entrar y aún no cuenta.
  */
 export async function getFixedReserve(
   db: Db,
@@ -86,19 +87,15 @@ export async function getFixedReserve(
   const rows = expenses.map((r) => {
     const pocket = r.pocket && !r.pocket.archived ? r.pocket : caja;
     if (pocket) pockets.set(pocket.id, pocket);
+    const dueDate = nextDueDate(r.dayOfMonth, month, r._count.transactions + r._count.paidMarks > 0, r);
+    const fraction = reserveFraction(r.intervalMonths, month, dueDate.toISOString().slice(0, 7));
     let amount: Decimal | null = null;
     try {
-      amount = convert(r.amount, r.currencyCode, pocket?.currencyCode ?? r.currencyCode, rate);
+      amount = convert(r.amount, r.currencyCode, pocket?.currencyCode ?? r.currencyCode, rate).mul(fraction).toDecimalPlaces(2);
     } catch {
       // Sin tasa para convertir: no se puede reservar
     }
-    return {
-      id: r.id,
-      name: r.name,
-      pocketKey: pocket?.id ?? NO_POCKET,
-      amount,
-      dueDate: nextDueDate(r.dayOfMonth, month, r._count.transactions + r._count.paidMarks > 0),
-    };
+    return { id: r.id, name: r.name, pocketKey: pocket?.id ?? NO_POCKET, amount, dueDate };
   });
 
   const ids = [...pockets.keys()];

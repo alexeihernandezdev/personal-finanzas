@@ -7,7 +7,7 @@ import { MonthNav, parseMonthParam } from "@/components/month-nav";
 import { PocketPicker } from "@/components/pocket-picker";
 import { CURRENCIES } from "@/components/wallet-fields";
 import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
-import { FIXED_RESERVE } from "@/lib/budget";
+import { FIXED_RESERVE, FREQUENCIES, nextDueMonth } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { prisma } from "@/lib/db";
 import { getFixedReserve, sumInCurrency } from "@/lib/fixed-reserve";
@@ -38,7 +38,8 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
   const tabs = [{ key: "personal", name: "Personal" }, ...businesses.map((b) => ({ key: b.id, name: b.name }))];
   const currentTab = tabs.find((t) => t.key === negocio) ?? tabs[0];
   const businessId = currentTab.key === "personal" ? null : currentTab.key;
-  const items = allItems.filter((i) => i.businessId === businessId);
+  // Primero los que vencen este mes; los trimestrales, semestrales y anuales que no, al final
+  const items = allItems.filter((i) => i.businessId === businessId).sort((a, b) => Number(b.due) - Number(a.due));
   // Apartados para "Se paga de": los del dueño primero, sin las Cajas (vacío = la Caja)
   const reservePockets = pockets
     .filter((p) => !p.isMain)
@@ -52,7 +53,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
   const reserveMissing = inDisplay("missing");
   const reserveHave = reserveTarget.sub(reserveMissing);
   const withoutPocket = items.filter((i) => i.active && !i.pocketId).length;
-  const active = items.filter((i) => i.active);
+  const active = items.filter((i) => i.active && i.due);
   const sumIn = (list: typeof items) =>
     list.reduce((acc, i) => {
       try {
@@ -69,7 +70,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
     <>
       <PageHeader
         title="Gastos fijos"
-        description="Pagos que se repiten cada mes"
+        description="Pagos que se repiten cada mes, trimestre, semestre o año"
         actions={<MonthNav month={month} basePath="/gastos-fijos" query={`negocio=${currentTab.key}`} />}
       />
       <nav className="mb-6 flex flex-wrap gap-2" aria-label="Dueño de los gastos fijos">
@@ -134,7 +135,8 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
             <Card className="p-0">
               <ul className="divide-y divide-border">
                 {items.map((r) => {
-                  const overdue = r.active && !r.paid && toISODate(r.dueDate) < today;
+                  const overdue = r.active && r.due && !r.paid && toISODate(r.dueDate) < today;
+                  const frequency = FREQUENCIES.find((f) => f.months === r.intervalMonths);
                   // La reserva cubre el próximo pago pendiente: solo se muestra en el mes en curso
                   const cover = r.active && !r.paid && isCurrentMonth ? coverage.get(r.id) : undefined;
                   return (
@@ -148,7 +150,8 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                         <div className="min-w-0 flex-1">
                           <p className="font-medium">{r.name}</p>
                           <p className="text-xs text-muted">
-                            Día {r.dayOfMonth} · {formatDate(r.dueDate, { day: "2-digit", month: "short" })}
+                            {r.intervalMonths > 1 && `${frequency?.label ?? `Cada ${r.intervalMonths} meses`} · `}
+                            Día {r.dayOfMonth} · {formatDate(r.dueDate, { day: "2-digit", month: "short", ...(r.due ? {} : { year: "numeric" }) })}
                             {r.category && ` · ${r.category.name}`}
                             {r.business && ` · ${r.business.name}`}
                             {r.wallet && ` · ${r.wallet.name}`}
@@ -210,6 +213,10 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                               Deshacer
                             </ConfirmButton>
                           </>
+                        ) : !r.due ? (
+                          <span className="text-xs text-muted">
+                            No toca este mes · próximo pago el {formatDate(r.dueDate)}
+                          </span>
                         ) : (
                           r.active &&
                           (r.autoPay ? (
@@ -331,6 +338,8 @@ type RecurringDefaults = {
   amount: Decimal;
   currencyCode: string;
   dayOfMonth: number;
+  intervalMonths: number;
+  startMonth: string | null;
   walletId: string | null;
   categoryId: string | null;
   businessId: string | null;
@@ -377,8 +386,29 @@ function RecurringFields({
           </Select>
         </Field>
       </div>
-      <Field label="Día del mes">
-        <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={defaults?.dayOfMonth ?? 1} />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Frecuencia">
+          <Select name="intervalMonths" defaultValue={defaults?.intervalMonths ?? 1}>
+            {FREQUENCIES.map((f) => (
+              <option key={f.months} value={f.months}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Día del mes">
+          <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={defaults?.dayOfMonth ?? 1} />
+        </Field>
+      </div>
+      <Field label="Mes del próximo pago">
+        <Input
+          name="startMonth"
+          type="month"
+          defaultValue={defaults?.startMonth ? nextDueMonth(defaults, currentMonth()) : currentMonth()}
+        />
+        <span className="text-xs text-muted">
+          Para los trimestrales, semestrales y anuales: desde ahí se repite. Su reserva se llena poco a poco cada mes.
+        </span>
       </Field>
       <Field label="Cuenta habitual">
         <Select name="walletId" defaultValue={defaults?.walletId ?? ""}>

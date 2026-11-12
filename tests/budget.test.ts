@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bucketShares, computeBudget, formatPercent, nextDueDate, planFixedReserve } from "@/lib/budget";
+import { bucketShares, computeBudget, formatPercent, isDueInMonth, nextDueDate, nextDueMonth, planFixedReserve, reserveFraction } from "@/lib/budget";
 import { Decimal } from "@/lib/money";
 
 const bucket = (name: string, percent: string) => ({ id: name, name, percent, color: "#000000" });
@@ -52,6 +52,40 @@ describe("nextDueDate", () => {
   it("ajusta el día al último del mes", () => {
     expect(nextDueDate(31, "2027-02", false).toISOString().slice(0, 10)).toBe("2027-02-28");
     expect(nextDueDate(31, "2027-01", true).toISOString().slice(0, 10)).toBe("2027-02-28");
+  });
+});
+
+describe("gastos fijos no mensuales", () => {
+  const anual = { intervalMonths: 12, startMonth: "2026-03" };
+  const trimestral = { intervalMonths: 3, startMonth: "2026-11" };
+  it("vence solo en los meses que le tocan", () => {
+    expect(isDueInMonth(anual, "2027-03")).toBe(true);
+    expect(isDueInMonth(anual, "2026-11")).toBe(false);
+    expect(isDueInMonth(trimestral, "2027-02")).toBe(true);
+    expect(isDueInMonth(trimestral, "2027-01")).toBe(false);
+    // Antes de su mes de inicio no vence
+    expect(isDueInMonth(trimestral, "2026-08")).toBe(false);
+    expect(isDueInMonth({ intervalMonths: 1, startMonth: null }, "2026-08")).toBe(true);
+  });
+  it("calcula el próximo mes de pago", () => {
+    expect(nextDueMonth(anual, "2026-11")).toBe("2027-03");
+    expect(nextDueMonth(trimestral, "2026-11")).toBe("2026-11");
+    expect(nextDueMonth(trimestral, "2026-12")).toBe("2027-02");
+    expect(nextDueMonth({ intervalMonths: 6, startMonth: "2027-05" }, "2026-11")).toBe("2027-05");
+  });
+  it("si ya se pagó, el próximo vencimiento salta según la frecuencia", () => {
+    expect(nextDueDate(14, "2026-11", true, trimestral).toISOString().slice(0, 10)).toBe("2027-02-14");
+    expect(nextDueDate(14, "2026-11", false, anual).toISOString().slice(0, 10)).toBe("2027-03-14");
+  });
+  it("la reserva se llena poco a poco hasta el mes anterior al pago", () => {
+    expect(reserveFraction(12, "2026-11", "2027-11")).toBeCloseTo(1 / 12);
+    expect(reserveFraction(12, "2027-10", "2027-11")).toBe(1);
+    expect(reserveFraction(12, "2027-11", "2027-11")).toBe(1);
+    expect(reserveFraction(3, "2026-11", "2027-01")).toBeCloseTo(2 / 3);
+    // Mensual: igual que antes, el próximo pago completo
+    expect(reserveFraction(1, "2026-11", "2026-12")).toBe(1);
+    // Un pago muy lejano todavía no se reserva
+    expect(reserveFraction(3, "2026-11", "2027-11")).toBe(0);
   });
 });
 

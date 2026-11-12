@@ -47,6 +47,9 @@ export async function createRecurring(_prev: ActionState, formData: FormData): P
       amount: d.amount,
       currencyCode: d.currencyCode,
       dayOfMonth: d.dayOfMonth,
+      // Los mensuales vencen todos los meses
+      intervalMonths: d.intervalMonths,
+      startMonth: d.intervalMonths === 1 ? null : d.startMonth,
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,
@@ -82,6 +85,9 @@ export async function updateRecurring(id: string, _prev: ActionState, formData: 
       amount: d.amount,
       currencyCode: d.currencyCode,
       dayOfMonth: d.dayOfMonth,
+      // Los mensuales vencen todos los meses
+      intervalMonths: d.intervalMonths,
+      startMonth: d.intervalMonths === 1 ? null : d.startMonth,
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,

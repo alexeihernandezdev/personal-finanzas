@@ -56,15 +56,69 @@ export type BudgetOverview = ReturnType<typeof computeBudget>;
 /** Valor del selector "Se paga de" de un gasto fijo: el apartado "Gastos fijos" de su dueño (se crea si falta). */
 export const FIXED_RESERVE = "fixed:auto";
 
-/**
- * Próximo vencimiento sin pagar de un gasto fijo: el de `month` si aún no se pagó (aunque ya esté
- * vencido), si no el del mes siguiente. El día se ajusta al último del mes.
- */
-export function nextDueDate(dayOfMonth: number, month: string, paidThisMonth: boolean) {
+/** Frecuencias de un gasto fijo, en meses. */
+export const FREQUENCIES = [
+  { months: 1, label: "Mensual", short: "cada mes" },
+  { months: 3, label: "Trimestral", short: "cada 3 meses" },
+  { months: 6, label: "Semestral", short: "cada 6 meses" },
+  { months: 12, label: "Anual", short: "cada año" },
+] as const;
+
+/** Calendario de un gasto fijo: cada `intervalMonths` meses a partir de `startMonth` (null = todos los meses). */
+export type Schedule = { intervalMonths: number; startMonth: string | null };
+
+const monthIndex = (month: string) => {
   const [y, m] = month.split("-").map(Number);
-  const index = m - 1 + (paidThisMonth ? 1 : 0);
-  const daysInMonth = new Date(Date.UTC(y, index + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(y, index, Math.min(dayOfMonth, daysInMonth)));
+  return y * 12 + m - 1;
+};
+
+/** Meses entre `from` y `to` (negativo si `to` es anterior). */
+export function monthsBetween(from: string, to: string) {
+  return monthIndex(to) - monthIndex(from);
+}
+
+/** Si el gasto fijo vence en `month`. Antes de su mes de inicio no vence. */
+export function isDueInMonth(s: Schedule, month: string) {
+  if (!s.startMonth) return true;
+  const diff = monthsBetween(s.startMonth, month);
+  return diff >= 0 && diff % Math.max(1, s.intervalMonths) === 0;
+}
+
+/** Primer mes (yyyy-mm) desde `month` (incluido) en el que vence el gasto fijo. */
+export function nextDueMonth(s: Schedule, month: string) {
+  if (!s.startMonth) return month;
+  const interval = Math.max(1, s.intervalMonths);
+  const diff = monthsBetween(s.startMonth, month);
+  const ahead = diff <= 0 ? -diff : (interval - (diff % interval)) % interval;
+  const index = monthIndex(month) + ahead;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+/** Fecha de vencimiento en un mes: el día se ajusta al último del mes. */
+export function dueDateInMonth(dayOfMonth: number, month: string) {
+  const [y, m] = month.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m - 1, Math.min(dayOfMonth, daysInMonth)));
+}
+
+/**
+ * Próximo vencimiento sin pagar de un gasto fijo: el de `month` si vence ese mes y aún no se pagó
+ * (aunque ya esté vencido), si no el siguiente según su frecuencia. El día se ajusta al último del mes.
+ */
+export function nextDueDate(dayOfMonth: number, month: string, paidThisMonth: boolean, schedule: Schedule = { intervalMonths: 1, startMonth: null }) {
+  const [y, m] = month.split("-").map(Number);
+  const from = paidThisMonth ? `${m === 12 ? y + 1 : y}-${String((m % 12) + 1).padStart(2, "0")}` : month;
+  return dueDateInMonth(dayOfMonth, nextDueMonth(schedule, from));
+}
+
+/**
+ * Parte del próximo pago que debería estar reservada en `month`: se ahorra un poco cada mes para
+ * tenerlo completo el mes anterior al vencimiento (igual que un gasto mensual). Entre 0 y 1.
+ */
+export function reserveFraction(intervalMonths: number, month: string, dueMonth: string) {
+  const interval = Math.max(1, intervalMonths);
+  const away = monthsBetween(month, dueMonth);
+  return Math.min(1, Math.max(0, (interval - away + 1) / interval));
 }
 
 /** Gasto fijo por reservar: monto en la divisa de su apartado (`pocketKey`). */

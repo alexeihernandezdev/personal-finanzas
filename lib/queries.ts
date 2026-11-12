@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import type { Prisma, TransactionType } from "@/lib/generated/prisma/client";
 import { convert, dec, Decimal, INFLOW_TYPES, type DecimalLike } from "@/lib/money";
 import { monthRange } from "@/lib/utils";
-import { computeBudget } from "@/lib/budget";
+import { computeBudget, dueDateInMonth, isDueInMonth, nextDueMonth } from "@/lib/budget";
 import { getMonthlyPlan } from "@/lib/fixed-reserve";
 
 // Todas las funciones reciben el userId ya verificado por requireUser().
@@ -259,7 +259,7 @@ export async function getMonthSummary(userId: string, month: string, fallbackRat
   };
 }
 
-/** Gastos fijos activos con su estado (pagado o no) en un mes. */
+/** Gastos fijos con su estado en un mes: si vencen ese mes, si se pagaron y su próximo vencimiento. */
 export async function getRecurringForMonth(userId: string, month: string) {
   const { start, end } = monthRange(month);
   const items = await prisma.recurringExpense.findMany({
@@ -277,13 +277,14 @@ export async function getRecurringForMonth(userId: string, month: string) {
     },
     orderBy: [{ active: "desc" }, { dayOfMonth: "asc" }],
   });
-  const [y, m] = month.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return items.map((r) => {
-    const day = Math.min(r.dayOfMonth, daysInMonth);
+    const due = isDueInMonth(r, month);
     return {
       ...r,
-      dueDate: new Date(Date.UTC(y, m - 1, day)),
+      /** Vence en este mes (los trimestrales, semestrales y anuales no vencen todos los meses) */
+      due,
+      /** Vencimiento de este mes o, si no vence este mes, el próximo */
+      dueDate: dueDateInMonth(r.dayOfMonth, due ? month : nextDueMonth(r, month)),
       paid: r.transactions.length > 0 || r.paidMarks.length > 0,
       payment: r.transactions[0] ?? null,
       /** Marcado como pagado sin movimiento */

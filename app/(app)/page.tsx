@@ -51,7 +51,7 @@ async function DashboardPageContent() {
   // Patrimonio neto: lo que tienes + lo que te deben − lo que debes
   const netWorth = walletTotal.add(receivableTotal).sub(debtTotal);
   const usdToDisplay = (usd: Decimal) => toDisplay(usd, "USD");
-  const pendingRecurring = recurring.filter((r) => r.active && !r.paid);
+  const pendingRecurring = recurring.filter((r) => r.active && r.due && !r.paid);
   const today = todayISO();
 
   return (
