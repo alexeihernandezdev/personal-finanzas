@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import { convert, type DecimalLike } from "@/lib/money";
+import { applyTransactionToPockets, AUTO_POCKET } from "@/lib/pockets";
 import { getRatesForDates } from "@/lib/rates";
 import { currentMonth, monthRange, todayISO, toISODate } from "@/lib/utils";
 
@@ -13,7 +14,8 @@ type RecurringLike = { id: string; userId: string; name: string; categoryId: str
 
 /**
  * Registra el pago de un gasto fijo como un gasto en la cuenta, convirtiendo el monto a la divisa
- * de la cuenta con la tasa BCV de la fecha del pago. Lanza un error si hace falta tasa y no hay.
+ * de la cuenta con la tasa BCV de la fecha del pago, y lo saca del apartado `pocketId`
+ * ("auto" = Caja de su dueño; vacío = ninguno). Lanza un error si hace falta tasa y no hay.
  */
 export async function recordRecurringPayment(
   r: RecurringLike,
@@ -21,23 +23,41 @@ export async function recordRecurringPayment(
   amount: DecimalLike,
   amountCurrency: string,
   date: Date,
+  pocketId?: string,
 ) {
   const rate = (await getRatesForDates([date], PAYMENT_RATE_SOURCE)).get(toISODate(date)) ?? null;
   const walletAmount = convert(amount, amountCurrency, wallet.currencyCode, rate).toDecimalPlaces(2).toString();
-  return prisma.transaction.create({
-    data: {
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.transaction.create({
+      data: {
+        userId: r.userId,
+        walletId: wallet.id,
+        type: "EXPENSE",
+        amount: walletAmount,
+        date,
+        description: r.name,
+        categoryId: r.categoryId,
+        recurringId: r.id,
+        rateVesPerUsd: rate?.toString() ?? null,
+        rateSource: rate ? PAYMENT_RATE_SOURCE : null,
+        splits: { create: [{ businessId: r.businessId, amount: walletAmount }] },
+      },
+    });
+    await applyTransactionToPockets(tx, {
       userId: r.userId,
-      walletId: wallet.id,
+      transactionId: created.id,
       type: "EXPENSE",
       amount: walletAmount,
+      currency: wallet.currencyCode,
       date,
-      description: r.name,
-      categoryId: r.categoryId,
-      recurringId: r.id,
-      rateVesPerUsd: rate?.toString() ?? null,
-      rateSource: rate ? PAYMENT_RATE_SOURCE : null,
-      splits: { create: [{ businessId: r.businessId, amount: walletAmount }] },
-    },
+      label: r.name,
+      splits: [{ businessId: r.businessId, amount: walletAmount }],
+      pocketId,
+      distribute: false,
+      rate,
+      cajaCurrency: wallet.currencyCode,
+    });
+    return created;
   });
 }
 
@@ -73,7 +93,8 @@ export async function processAutoPayments(userId?: string) {
     // Aún no vence, o venció antes de crear el gasto fijo (ese mes ya se habría pagado aparte)
     if (due > today || due < createdDay.format(r.createdAt)) continue;
     try {
-      await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate);
+      // Sale de su reserva de gastos fijos (o de la Caja de su dueño)
+      await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate, r.pocketId ?? AUTO_POCKET);
       created++;
     } catch {
       // Sin tasa para convertir: se reintenta en la próxima ejecución

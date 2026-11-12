@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
+import { PocketPicker } from "@/components/pocket-picker";
+import type { PocketChoice } from "@/components/transaction-form";
 import { Field, Input, Select } from "@/components/ui";
 import type { ActionState } from "@/lib/action";
 import { cn } from "@/lib/utils";
@@ -10,11 +12,13 @@ export function DebtForm({
   action,
   wallets,
   businesses,
+  pockets,
   today,
 }: {
   action: (prev: ActionState, formData: FormData) => Promise<ActionState>;
   wallets: { id: string; name: string; currencyCode: string }[];
   businesses: { id: string; name: string }[];
+  pockets: PocketChoice[];
   today: string;
 }) {
   const [kind, setKind] = useState<"PAYABLE" | "LOAN_RECEIVED">("PAYABLE");
@@ -68,6 +72,9 @@ export function DebtForm({
               <Input name="date" type="date" defaultValue={today} />
             </Field>
           </div>
+          <Field label="Entra al apartado">
+            <PocketPicker pockets={pockets} direction="in" />
+          </Field>
         </>
       ) : (
         <div className="grid grid-cols-2 gap-3">

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { applyTransactionToPockets, pocketFailure } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { paymentSchema, receivableSchema } from "@/lib/validators";
@@ -27,29 +28,46 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
     // Un préstamo saca el dinero de una cuenta: el préstamo se registra en la divisa de esa cuenta.
     if (!d.walletId) return fail("Elige la cuenta de la que sale el dinero prestado");
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: d.walletId } });
-    await prisma.receivable.create({
-      data: {
-        userId: user.id,
-        kind: "LOAN_GIVEN",
-        counterparty: d.counterparty,
-        description: d.description ?? "",
-        amount: d.amount,
-        currencyCode: wallet.currencyCode,
-        expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
-        businessId: d.businessId ?? null,
-        transactions: {
-          create: {
+    const date = parseISODate(d.date ?? todayISO());
+    const description = `Préstamo a ${d.counterparty}`;
+    try {
+      await prisma.$transaction(async (tx) => {
+        const receivable = await tx.receivable.create({
+          data: {
             userId: user.id,
-            walletId: wallet.id,
-            type: "LOAN_OUT",
+            kind: "LOAN_GIVEN",
+            counterparty: d.counterparty,
+            description: d.description ?? "",
             amount: d.amount,
-            date: parseISODate(d.date ?? todayISO()),
-            description: `Préstamo a ${d.counterparty}`,
-            ...rate,
+            currencyCode: wallet.currencyCode,
+            expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
+            businessId: d.businessId ?? null,
+            transactions: {
+              create: { userId: user.id, walletId: wallet.id, type: "LOAN_OUT", amount: d.amount, date, description, ...rate },
+            },
           },
-        },
-      },
-    });
+          include: { transactions: { select: { id: true } } },
+        });
+        // El dinero prestado sale del apartado elegido
+        await applyTransactionToPockets(tx, {
+          userId: user.id,
+          transactionId: receivable.transactions[0].id,
+          type: "EXPENSE",
+          amount: d.amount,
+          currency: wallet.currencyCode,
+          date,
+          label: d.counterparty,
+          description,
+          splits: [{ businessId: d.businessId ?? null, amount: d.amount }],
+          pocketId: d.pocketId,
+          distribute: false,
+          rate: rate.rateVesPerUsd,
+          cajaCurrency: user.displayCurrency,
+        });
+      });
+    } catch (e) {
+      return pocketFailure(e);
+    }
   } else {
     await prisma.receivable.create({
       data: {
@@ -81,20 +99,47 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
   if (r.status === "CANCELLED" || r.status === "SETTLED") return fail("Este registro ya está cerrado");
 
   const isLoan = r.kind === "LOAN_GIVEN";
-  await prisma.transaction.create({
-    data: {
-      userId: user.id,
-      walletId: wallet.id,
-      type: isLoan ? "LOAN_REPAYMENT" : "INCOME",
-      amount: d.amount,
-      date: parseISODate(d.date),
-      description: isLoan ? `Devolución de ${r.counterparty}` : `Cobro: ${r.counterparty}${r.description ? ` · ${r.description}` : ""}`,
-      receivableId: r.id,
-      ...(await snapshotRate(user.preferredRateSource)),
-      // Solo los ingresos cuentan para los negocios; la devolución de un préstamo no es ingreso
-      ...(isLoan ? {} : { splits: { create: [{ businessId: r.businessId, amount: d.amount }] } }),
-    },
-  });
+  const rate = await snapshotRate(user.preferredRateSource);
+  const date = parseISODate(d.date);
+  const description = isLoan
+    ? `Devolución de ${r.counterparty}`
+    : `Cobro: ${r.counterparty}${r.description ? ` · ${r.description}` : ""}`;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.transaction.create({
+        data: {
+          userId: user.id,
+          walletId: wallet.id,
+          type: isLoan ? "LOAN_REPAYMENT" : "INCOME",
+          amount: d.amount,
+          date,
+          description,
+          receivableId: r.id,
+          ...rate,
+          // Solo los ingresos cuentan para los negocios; la devolución de un préstamo no es ingreso
+          ...(isLoan ? {} : { splits: { create: [{ businessId: r.businessId, amount: d.amount }] } }),
+        },
+      });
+      // Lo cobrado entra al apartado elegido; solo un cobro (no una devolución) se reparte por presupuesto
+      await applyTransactionToPockets(tx, {
+        userId: user.id,
+        transactionId: created.id,
+        type: "INCOME",
+        amount: d.amount,
+        currency: wallet.currencyCode,
+        date,
+        label: r.counterparty,
+        description,
+        splits: [{ businessId: r.businessId, amount: d.amount }],
+        pocketId: d.pocketId,
+        distribute: !isLoan && d.distribute,
+        rate: rate.rateVesPerUsd,
+        cajaCurrency: user.displayCurrency,
+      });
+    });
+  } catch (e) {
+    return pocketFailure(e);
+  }
   await recomputeReceivableStatus(r.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Cobro registrado" };
@@ -119,6 +164,7 @@ export async function deleteReceivable(id: string) {
   if (!r) return;
   // Borra también la salida del préstamo y los cobros asociados, para no descuadrar saldos
   await prisma.$transaction([
+    prisma.pocketMovement.deleteMany({ where: { sourceTransaction: { receivableId: id } } }),
     prisma.transaction.deleteMany({ where: { receivableId: id, userId: user.id } }),
     prisma.receivable.delete({ where: { id } }),
   ]);

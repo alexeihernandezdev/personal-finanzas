@@ -8,7 +8,7 @@ import { fail, zodError, type ActionState } from "@/lib/action";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
 import { splitsMatchTotal } from "@/lib/money";
 import { recomputeDebtStatus } from "@/lib/debts";
-import { applyTransactionToPockets, PocketError, revertTransactionPockets } from "@/lib/pockets";
+import { applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate } from "@/lib/utils";
 import { transactionSchema } from "@/lib/validators";
@@ -94,15 +94,6 @@ async function moveToPockets(
     rate,
     cajaCurrency: user.displayCurrency,
   });
-}
-
-/** Errores de conversión o de apartado se devuelven al formulario en vez de romper la página. */
-function pocketFailure(e: unknown) {
-  if (e instanceof PocketError) return fail(e.message);
-  if (e instanceof Error && /tasa|Conversión/.test(e.message)) {
-    return fail("No hay tasa disponible para convertir a la divisa del apartado");
-  }
-  throw e;
 }
 
 export async function createTransaction(_prev: ActionState, formData: FormData): Promise<ActionState> {

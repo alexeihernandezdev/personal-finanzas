@@ -1,6 +1,9 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/lib/generated/prisma/client";
+import { fail } from "@/lib/action";
+import { bucketShares } from "@/lib/budget";
+import { getFixedReserve, getMonthlyPlan } from "@/lib/fixed-reserve";
 import { convert, dec, Decimal, type DecimalLike } from "@/lib/money";
 
 type Tx = Prisma.TransactionClient;
@@ -104,23 +107,54 @@ export async function withdrawFromPocket(
 }
 
 /**
- * Reparte lo que entró a una Caja entre los apartados de las partidas de su dueño (cada una su %).
- * Lo que no cubren las partidas (gastos fijos, colchón, libre) se queda en la Caja.
+ * Reparte lo que entró a una Caja. Primero cubre los próximos gastos fijos de su dueño (y el colchón),
+ * empezando por el que vence antes: lo que les falta pasa a su apartado (o se queda en la Caja si se
+ * pagan de ahí). Lo que sobra se reparte entre los apartados de las partidas, con el % ajustado para que
+ * a fin de mes cada una haya recibido su % del ingreso fijo. El resto (libre) se queda en la Caja.
  */
 async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx: Ctx) {
   const depth = ctx.depth ?? 0;
   const visited = new Set(ctx.visited);
   if (depth >= MAX_DEPTH || visited.has(caja.id)) return;
   visited.add(caja.id);
+  const next = { ...ctx, depth: depth + 1, visited, distribute: false };
+
+  let rest = amount;
+  const reserve = await getFixedReserve(tx, ctx.userId, caja.businessId, ctx.rate, { pocketId: caja.id, amount });
+  const missing = [
+    ...reserve.items.filter((i) => i.missing.gt(0)).map((i) => ({ label: i.name, key: i.pocketKey, missing: i.missing })),
+    ...reserve.pockets.filter((p) => p.bufferMissing.gt(0)).map((p) => ({ label: "Colchón", key: p.key, missing: p.bufferMissing })),
+  ];
+  for (const m of missing) {
+    if (rest.lte(0)) break;
+    const pocket = reserve.pockets.find((p) => p.key === m.key)?.pocket;
+    if (!pocket) continue;
+    let part: Decimal;
+    try {
+      part = Decimal.min(rest, convert(m.missing, pocket.currencyCode, caja.currencyCode, ctx.rate).toDecimalPlaces(2, Decimal.ROUND_UP));
+    } catch {
+      continue;
+    }
+    rest = rest.sub(part);
+    // Si se paga desde la Caja, basta con no repartir esa parte
+    if (pocket.id === caja.id) continue;
+    const target = { ...pocket, businessId: caja.businessId };
+    await withdrawFromPocket(tx, caja, part, caja.currencyCode, `Gastos fijos: ${m.label} → ${pocket.name}`, ctx);
+    await allocateToPocket(tx, target, part, caja.currencyCode, `Gastos fijos: ${m.label} (de ${caja.name})`, next);
+  }
+  if (rest.lte(0)) return;
 
   const buckets = await tx.budgetBucket.findMany({
     where: { userId: ctx.userId, businessId: caja.businessId, pocket: { archived: false } },
     include: { pocket: { select: pocketSelect } },
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
   });
-  for (const b of buckets) {
+  const plan = await getMonthlyPlan(tx, ctx.userId, caja.businessId, caja.currencyCode, ctx.rate);
+  const planFixed = plan.fixed.mul(new Decimal(100).add(plan.bufferPercent)).div(100);
+  const shares = bucketShares(plan.income, planFixed, buckets);
+  for (const [i, b] of buckets.entries()) {
     if (!b.pocket || b.pocket.id === caja.id) continue;
-    const part = amount.mul(dec(b.percent)).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+    const part = rest.mul(shares[i]).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
     if (part.isZero()) continue;
     await withdrawFromPocket(tx, caja, part, caja.currencyCode, `${b.name} → ${b.pocket.name}`, ctx);
     await allocateToPocket(tx, b.pocket, part, caja.currencyCode, `${b.name} (de ${caja.name})`, {
@@ -148,6 +182,8 @@ export async function applyTransactionToPockets(
     currency: string;
     date: Date;
     label: string;
+    /** Descripción completa del movimiento de apartado; por defecto "Ingreso/Gasto: label" */
+    description?: string;
     splits: { businessId: string | null; amount: DecimalLike }[];
     pocketId: string | undefined;
     distribute: boolean;
@@ -165,7 +201,7 @@ export async function applyTransactionToPockets(
     rate: input.rate,
     distribute: input.type === "INCOME" && input.distribute,
   };
-  const description = `${input.type === "INCOME" ? "Ingreso" : "Gasto"}: ${input.label}`;
+  const description = input.description ?? `${input.type === "INCOME" ? "Ingreso" : "Gasto"}: ${input.label}`;
   const move = (pocket: PocketRef, amount: DecimalLike) =>
     input.type === "INCOME"
       ? allocateToPocket(tx, pocket, amount, input.currency, description, ctx)
@@ -198,4 +234,23 @@ export function revertTransactionPockets(tx: Tx, transactionId: string) {
   return tx.pocketMovement.deleteMany({ where: { sourceTransactionId: transactionId, groupId: { not: null } } });
 }
 
+/** Apartado al que fue a parar (o del que salió) un movimiento sin reparto; null si no tocó ninguno. */
+export async function pocketOfTransaction(tx: Tx, transactionId: string) {
+  const first = await tx.pocketMovement.findFirst({
+    where: { sourceTransactionId: transactionId, groupId: { not: null } },
+    orderBy: { createdAt: "asc" },
+    select: { pocketId: true },
+  });
+  return first?.pocketId ?? null;
+}
+
 export class PocketError extends Error {}
+
+/** Errores de conversión o de apartado se devuelven al formulario en vez de romper la página. */
+export function pocketFailure(e: unknown) {
+  if (e instanceof PocketError) return fail(e.message);
+  if (e instanceof Error && /tasa|Conversión/.test(e.message)) {
+    return fail("No hay tasa disponible para convertir a la divisa del apartado");
+  }
+  throw e;
+}

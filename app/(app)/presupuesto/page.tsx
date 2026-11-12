@@ -4,8 +4,10 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Card, EmptyState, Field, Input, PageHeader, SectionTitle } from "@/components/ui";
-import { formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
+import { bucketShares, formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
+import { prisma } from "@/lib/db";
+import { getFixedReserve, sumInCurrency } from "@/lib/fixed-reserve";
 import { Decimal, formatMoney } from "@/lib/money";
 import { getBudgetOverview, getBusinesses, getPockets, getRecentIncomes } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
@@ -23,11 +25,18 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
   const tabs = [{ key: "personal", name: "Personal" }, ...businesses.map((b) => ({ key: b.id, name: b.name }))];
   const currentTab = tabs.find((t) => t.key === negocio) ?? tabs[0];
   const businessId = currentTab.key === "personal" ? null : currentTab.key;
-  const [budget, pockets, incomes] = await Promise.all([
+  const [budget, pockets, incomes, reserve] = await Promise.all([
     getBudgetOverview(user.id, user.displayCurrency, rate, businessId),
     getPockets(user.id),
     getRecentIncomes(user.id, { businessId }),
+    getFixedReserve(prisma, user.id, businessId, rate),
   ]);
+  const inDisplay = (key: "target" | "missing") =>
+    sumInCurrency(reserve.pockets.map((p) => ({ amount: p[key], currencyCode: p.pocket?.currencyCode })), user.displayCurrency, rate);
+  const reserveTarget = inDisplay("target");
+  const reserveHave = reserveTarget.sub(inDisplay("missing"));
+  // % de lo que sobra tras los gastos fijos que se lleva cada partida (para que el mes cuadre)
+  const shares = bucketShares(budget.income, budget.fixed.add(budget.buffer), budget.buckets);
   const active = pockets.filter((p) => !p.archived);
   const pocketOptions: PocketOption[] = [
     ...active.filter((p) => !p.businessId),
@@ -70,9 +79,10 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
       </nav>
       <p className="mb-6 rounded-lg bg-background px-4 py-3 text-sm text-muted">
         Cuando entra dinero a{" "}
-        <span className="font-medium text-foreground">{caja?.name ?? `la Caja ${currentTab.name}`}</span>, cada
-        partida con apartado se lleva su porcentaje automáticamente. Lo demás (gastos fijos, colchón y libre) se queda
-        en la Caja.
+        <span className="font-medium text-foreground">{caja?.name ?? `la Caja ${currentTab.name}`}</span>, primero se
+        reserva lo que falta para los próximos gastos fijos y el colchón, empezando por el que vence antes. Lo que sobra se
+        reparte entre las partidas con apartado, ajustado para que a fin de mes cada una haya recibido su porcentaje. Lo
+        libre se queda en la Caja.
         {businessId && " Para pasarte un sueldo, crea una partida que vaya a Personal."}
       </p>
 
@@ -145,7 +155,14 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
             <ul className="mt-4 divide-y divide-border">
               <li className="flex items-center gap-3 py-2.5 text-sm">
                 <span className="size-3 shrink-0 rounded-full bg-muted" />
-                <span className="flex-1 font-medium">Gastos fijos</span>
+                <span className="min-w-0 flex-1 font-medium">
+                  Gastos fijos
+                  {reserveTarget.gt(0) && (
+                    <span className="block text-xs font-normal text-muted">
+                      Reservado {formatMoney(reserveHave, cur)} de {formatMoney(reserveTarget, cur)} para los próximos pagos
+                    </span>
+                  )}
+                </span>
                 <span className="w-16 text-right tabular text-muted">{noIncome ? "—" : formatPercent(budget.fixedPercent)}</span>
                 <span className="w-28 text-right tabular">{formatMoney(budget.fixed, cur)}</span>
                 <span className={rowActions} />
@@ -210,7 +227,8 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
             <Card className="h-fit">
               <h2 className="mb-1 font-semibold">Repartir un ingreso</h2>
               <p className="mb-4 text-xs text-muted">
-                Para ingresos que no entraron a la Caja: aparta a mano la parte de cada partida. El dinero se queda en tus cuentas.
+                Para ingresos que no entraron a la Caja: aparta a mano lo que falta para los gastos fijos y la parte de cada
+                partida. El dinero se queda en tus cuentas.
               </p>
               <DistributeIncomeButton
                 businessId={businessId ?? ""}
@@ -222,6 +240,15 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                   currency: i.wallet.currencyCode,
                   distributed: i.distributed,
                 }))}
+                rate={rate?.toString() ?? null}
+                fixed={reserve.pockets
+                  .filter((p) => p.pocket && p.missing.gt(0))
+                  .map((p) => ({
+                    pocketId: p.pocket!.id,
+                    name: p.pocket!.name,
+                    currency: p.pocket!.currencyCode,
+                    missing: p.missing.toString(),
+                  }))}
                 buckets={budget.buckets.map((b) => {
                   const p = b.pocketId ? pocketById.get(b.pocketId) : undefined;
                   return {
@@ -229,6 +256,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                     name: b.name,
                     color: b.color,
                     percent: b.percent.toString(),
+                    share: shares[budget.buckets.indexOf(b)].toString(),
                     pocket: p ? { name: p.name, currency: p.currencyCode } : null,
                   };
                 })}

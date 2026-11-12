@@ -3,10 +3,11 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { DebtForm } from "@/components/debt-form";
+import { PocketPicker } from "@/components/pocket-picker";
 import { Amount, Badge, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getBusinesses, getDebts, getWalletsWithBalance } from "@/lib/queries";
+import { getBusinesses, getDebts, getPocketChoices, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import { cancelDebt, createDebt, deleteDebt, deleteDebtPayment, registerDebtPayment, updateDebtTransaction } from "./actions";
@@ -23,11 +24,12 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
   const kind = tab === "prestamos" ? "LOAN_RECEIVED" : "PAYABLE";
   const showAll = ver === "todos";
   const user = await requireUser();
-  const [all, wallets, businesses, rates] = await Promise.all([
+  const [all, wallets, businesses, rates, pockets] = await Promise.all([
     getDebts(user.id),
     getWalletsWithBalance(user.id),
     getBusinesses(user.id),
     getCurrentRates(),
+    getPocketChoices(user.id),
   ]);
   const rate = pickRate(rates, user.preferredRateSource);
   const items = all.filter((r) => r.kind === kind && (showAll || r.status === "PENDING" || r.status === "PARTIAL"));
@@ -176,6 +178,7 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                           </Select>
                           <Input name="amount" inputMode="decimal" defaultValue={r.remaining.toFixed(2)} className="h-8 w-28 text-xs" />
                           <Input name="date" type="date" defaultValue={today} className="h-8 w-36 text-xs" />
+                          <PocketPicker pockets={pockets} direction="out" className="h-8 w-44 text-xs" />
                           <SubmitButton variant="secondary" className="h-8 text-xs">
                             Registrar pago
                           </SubmitButton>
@@ -209,6 +212,7 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
             action={createDebt}
             wallets={wallets.map((w) => ({ id: w.id, name: w.name, currencyCode: w.currencyCode }))}
             businesses={businesses.map((b) => ({ id: b.id, name: b.name }))}
+            pockets={pockets}
             today={today}
           />
         </Card>

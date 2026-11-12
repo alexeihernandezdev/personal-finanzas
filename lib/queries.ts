@@ -4,6 +4,7 @@ import type { Prisma, TransactionType } from "@/lib/generated/prisma/client";
 import { convert, dec, Decimal, INFLOW_TYPES, type DecimalLike } from "@/lib/money";
 import { monthRange } from "@/lib/utils";
 import { computeBudget } from "@/lib/budget";
+import { getMonthlyPlan } from "@/lib/fixed-reserve";
 
 // Todas las funciones reciben el userId ya verificado por requireUser().
 
@@ -99,6 +100,7 @@ export async function getPocketChoices(userId: string) {
       name: p.name,
       currencyCode: p.currencyCode,
       isMain: p.isMain,
+      isFixedReserve: p.isFixedReserve,
       businessId: p.businessId,
       ownerName: p.business?.name ?? "Personal",
       rules: p.isMain
@@ -266,6 +268,7 @@ export async function getRecurringForMonth(userId: string, month: string) {
       wallet: { select: { id: true, name: true, currencyCode: true } },
       category: { select: { id: true, name: true } },
       business: { select: { id: true, name: true } },
+      pocket: { select: { id: true, name: true, archived: true } },
       transactions: {
         where: { date: { gte: start, lt: end } },
         select: { id: true, date: true, amount: true, wallet: { select: { name: true, currencyCode: true } } },
@@ -332,21 +335,11 @@ export async function getBudgetOverview(
   rate: Decimal | null,
   businessId: string | null = null,
 ) {
-  const [incomes, expenses, buckets, settings] = await Promise.all([
-    prisma.recurringIncome.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
-    prisma.recurringExpense.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
+  const [plan, buckets] = await Promise.all([
+    getMonthlyPlan(prisma, userId, businessId, displayCurrency, rate),
     getBudgetBuckets(userId, businessId),
-    prisma.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } }),
   ]);
-  const sum = (list: { amount: Prisma.Decimal; currencyCode: string }[]) =>
-    list.reduce((acc, i) => {
-      try {
-        return acc.add(convert(i.amount, i.currencyCode, displayCurrency, rate));
-      } catch {
-        return acc;
-      }
-    }, new Decimal(0));
-  return computeBudget(sum(incomes), sum(expenses), buckets, settings?.fixedBufferPercent ?? 0);
+  return computeBudget(plan.income, plan.fixed, buckets, plan.bufferPercent);
 }
 
 /** Cuentas por cobrar y préstamos con el monto cobrado hasta ahora (en la divisa del registro). */

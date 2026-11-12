@@ -5,7 +5,7 @@ import { useState } from "react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { Modal } from "@/components/modal";
 import { Button, Field, Input, Select } from "@/components/ui";
-import { Decimal, formatMoney } from "@/lib/money";
+import { convert, Decimal, formatMoney } from "@/lib/money";
 import { distributeIncome } from "./actions";
 
 export type IncomeOption = {
@@ -21,8 +21,33 @@ export type DistributableBucket = {
   name: string;
   color: string;
   percent: string;
+  /** % de lo que sobra tras los gastos fijos (ajustado para que el mes cuadre) */
+  share: string;
   pocket: { name: string; currency: string } | null;
 };
+
+/** Apartado de reserva de gastos fijos al que le falta dinero (`missing`, en su divisa). */
+export type FixedReserveLine = { pocketId: string; name: string; currency: string; missing: string };
+
+/**
+ * Sugerencia de reparto: primero lo que falta para los gastos fijos (hasta donde alcance el ingreso, en
+ * su divisa); `rest` es lo que sobra para las partidas.
+ */
+function suggestFixed(fixed: FixedReserveLine[], income: IncomeOption | undefined, rate: string | null) {
+  let rest = new Decimal(income?.amount ?? 0);
+  const fixedSuggested = fixed.map((f) => {
+    let missing = new Decimal(0);
+    try {
+      if (income) missing = convert(f.missing, f.currency, income.currency, rate).toDecimalPlaces(2, Decimal.ROUND_UP);
+    } catch {
+      // Sin tasa: se deja en 0 para escribirlo a mano
+    }
+    const amount = Decimal.max(0, Decimal.min(missing, rest));
+    rest = rest.sub(amount);
+    return { ...f, amount };
+  });
+  return { fixedSuggested, rest };
+}
 
 /** Botón + modal para repartir un ingreso entre los apartados de cada partida según su porcentaje. */
 export function DistributeIncomeButton({
@@ -30,9 +55,14 @@ export function DistributeIncomeButton({
   buckets,
   initialIncomeId,
   businessId,
+  fixed,
+  rate,
 }: {
   incomes: IncomeOption[];
   buckets: DistributableBucket[];
+  fixed: FixedReserveLine[];
+  /** VES por USD para convertir lo que falta a la divisa del ingreso */
+  rate: string | null;
   initialIncomeId?: string;
   /** Dueño del presupuesto (vacío = Personal) */
   businessId: string;
@@ -44,6 +74,8 @@ export function DistributeIncomeButton({
   const linked = buckets.filter((b) => b.pocket);
   const unlinked = buckets.filter((b) => !b.pocket);
   const close = () => setOpen(false);
+
+  const { fixedSuggested, rest } = suggestFixed(fixed, income, rate);
 
   return (
     <>
@@ -70,6 +102,36 @@ export function DistributeIncomeButton({
             </p>
           )}
 
+          {income && fixedSuggested.length > 0 && (
+            <ul className="flex flex-col gap-3 border-b border-border pb-4">
+              {fixedSuggested.map((f) => (
+                <li key={f.pocketId} className="flex items-center gap-3 text-sm">
+                  <span className="size-3 shrink-0 rounded-full bg-muted" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">Gastos fijos</p>
+                    <p className="flex items-center gap-1 truncate text-xs text-muted">
+                      <ArrowRight className="size-3 shrink-0" />
+                      {f.name} · faltan {formatMoney(f.missing, f.currency)}
+                    </p>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      key={`${income.id}:${f.pocketId}`}
+                      name={`fixed:${f.pocketId}`}
+                      defaultValue={f.amount.toFixed(2)}
+                      inputMode="decimal"
+                      aria-label={`Monto para gastos fijos en ${f.name}`}
+                      className="w-28 pr-10 text-right tabular"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">
+                      {income.currency}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
           {linked.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted">
               Ninguna partida tiene apartado. Asígnale uno con el lápiz de cada partida.
@@ -79,7 +141,7 @@ export function DistributeIncomeButton({
               <ul className="flex flex-col gap-3">
                 {linked.map((b) => {
                   const pocket = b.pocket!;
-                  const suggested = new Decimal(income.amount).mul(b.percent).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+                  const suggested = Decimal.max(0, rest).mul(b.share).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
                   return (
                     <li key={b.id} className="flex items-center gap-3 text-sm">
                       <span className="size-3 shrink-0 rounded-full" style={{ background: b.color }} />

@@ -175,6 +175,17 @@ export async function distributeIncome(_prev: ActionState, formData: FormData): 
     if (amount.isZero()) continue;
     lines.push({ name: b.name, pocketId: b.pocket.id, currency: b.pocket.currencyCode, amount });
   }
+  // Reserva de gastos fijos: campos `fixed:<pocketId>`
+  for (const [key, raw] of formData.entries()) {
+    if (!key.startsWith("fixed:") || typeof raw !== "string" || !raw.trim()) continue;
+    const pocket = await prisma.pocket.findFirst({ where: { id: key.slice(6), userId: user.id, archived: false } });
+    if (!pocket) return fail("Apartado de gastos fijos no encontrado");
+    const n = normalizeAmount(raw);
+    if (n === null) return fail(`Monto inválido en ${pocket.name}`);
+    const amount = dec(n);
+    if (amount.isZero()) continue;
+    lines.push({ name: "Gastos fijos", pocketId: pocket.id, currency: pocket.currencyCode, amount });
+  }
   if (!lines.length) return fail("Indica al menos un monto");
 
   const from = income.wallet;

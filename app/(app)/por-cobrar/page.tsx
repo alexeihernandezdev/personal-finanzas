@@ -2,11 +2,12 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
+import { PocketPicker } from "@/components/pocket-picker";
 import { ReceivableForm } from "@/components/receivable-form";
 import { Amount, Badge, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getBusinesses, getReceivables, getWalletsWithBalance } from "@/lib/queries";
+import { getBusinesses, getPocketChoices, getReceivables, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import { cancelReceivable, createReceivable, deleteReceivable, registerPayment } from "./actions";
@@ -23,11 +24,12 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
   const kind = tab === "prestamos" ? "LOAN_GIVEN" : "RECEIVABLE";
   const showAll = ver === "todos";
   const user = await requireUser();
-  const [all, wallets, businesses, rates] = await Promise.all([
+  const [all, wallets, businesses, rates, pockets] = await Promise.all([
     getReceivables(user.id),
     getWalletsWithBalance(user.id),
     getBusinesses(user.id),
     getCurrentRates(),
+    getPocketChoices(user.id),
   ]);
   const rate = pickRate(rates, user.preferredRateSource);
   const items = all.filter((r) => r.kind === kind && (showAll || r.status === "PENDING" || r.status === "PARTIAL"));
@@ -136,6 +138,16 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                           </Select>
                           <Input name="amount" inputMode="decimal" defaultValue={r.remaining.toFixed(2)} className="h-8 w-28 text-xs" />
                           <Input name="date" type="date" defaultValue={today} className="h-8 w-36 text-xs" />
+                          <PocketPicker pockets={pockets} direction="in" className="h-8 w-44 text-xs" />
+                          {r.kind === "RECEIVABLE" && (
+                            <label
+                              className="flex items-center gap-1.5 text-xs text-muted"
+                              title="Si entra a una Caja, se reparte entre sus apartados según el presupuesto"
+                            >
+                              <input type="checkbox" name="distribute" defaultChecked />
+                              Repartir
+                            </label>
+                          )}
                           <SubmitButton variant="secondary" className="h-8 text-xs">
                             Registrar cobro
                           </SubmitButton>
@@ -169,6 +181,7 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
             action={createReceivable}
             wallets={wallets.map((w) => ({ id: w.id, name: w.name, currencyCode: w.currencyCode }))}
             businesses={businesses.map((b) => ({ id: b.id, name: b.name }))}
+            pockets={pockets}
             today={today}
           />
         </Card>

@@ -105,6 +105,8 @@ export const recurringSchema = z.object({
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
+  // Apartado del que se paga: id, FIXED_RESERVE (el de "Gastos fijos" de su dueño) o vacío (la Caja)
+  pocketId: optionalId,
   autoPay: z
     .string()
     .optional()
@@ -163,8 +165,9 @@ export const receivableSchema = z.object({
   currencyCode,
   expectedDate: isoDate.optional(),
   businessId: optionalId,
-  // Solo préstamos: cuenta desde la que sale el dinero
+  // Solo préstamos: cuenta desde la que sale el dinero y apartado del que sale
   walletId: optionalId,
+  pocketId: optionalId,
   date: isoDate.optional(),
 });
 
@@ -173,6 +176,12 @@ export const paymentSchema = z.object({
   walletId: z.string({ error: "Elige la cuenta donde entra el dinero" }),
   amount: amount(),
   date: isoDate,
+  // Apartado al que entra ("auto" = Caja del dueño; vacío = ninguno)
+  pocketId: optionalId,
+  distribute: z
+    .string()
+    .optional()
+    .transform((v) => v === "on"),
 });
 
 export const debtSchema = z.object({
@@ -183,8 +192,9 @@ export const debtSchema = z.object({
   currencyCode,
   dueDate: isoDate.optional(),
   businessId: optionalId,
-  // Solo préstamos recibidos: cuenta a la que entra el dinero
+  // Solo préstamos recibidos: cuenta y apartado a los que entra el dinero
   walletId: optionalId,
+  pocketId: optionalId,
   date: isoDate.optional(),
 });
 
@@ -193,6 +203,8 @@ export const debtPaymentSchema = z.object({
   walletId: z.string({ error: "Elige la cuenta de la que sale el dinero" }),
   amount: amount(),
   date: isoDate,
+  // Apartado del que sale ("auto" = Caja del dueño; vacío = ninguno)
+  pocketId: optionalId,
 });
 
 export const debtTransactionEditSchema = z.object({

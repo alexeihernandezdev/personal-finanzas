@@ -194,6 +194,8 @@ model RecurringExpense {
   walletId     String?
   categoryId   String?
   businessId   String?
+  // Apartado del que se paga (y que se llena primero al entrar dinero); null = la Caja del dueño
+  pocketId     String?
   active       Boolean  @default(true)
   // Se cobra solo (domiciliado): el pago se registra automáticamente el día del vencimiento
   autoPay      Boolean  @default(false)
@@ -203,6 +205,7 @@ model RecurringExpense {
   wallet       Wallet?             @relation(fields: [walletId], references: [id], onDelete: SetNull)
   category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   business     Business?           @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  pocket       Pocket?             @relation(fields: [pocketId], references: [id], onDelete: SetNull)
   transactions Transaction[]
   paidMarks    RecurringPaidMark[]
 
@@ -250,12 +253,12 @@ model RecurringIncome {
 // Los gastos fijos no son una partida: su porcentaje se calcula a partir de sus montos.
 
 model BudgetBucket {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  percent   Decimal  @db.Decimal(5, 2)
-  color     String   @default("#6366f1")
-  position  Int      @default(0)
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  percent    Decimal  @db.Decimal(5, 2)
+  color      String   @default("#6366f1")
+  position   Int      @default(0)
   // Apartado al que va su porcentaje cuando se reparte un ingreso
   pocketId   String?
   // Dueño del presupuesto: null = Personal
@@ -346,24 +349,27 @@ enum PocketKind {
 }
 
 model Pocket {
-  id           String     @id @default(cuid())
-  userId       String
-  currencyCode String // Divisa del apartado; no está ligado a ninguna cuenta
-  name         String
-  kind         PocketKind @default(SAVINGS)
-  businessId   String? // null = Personal
-  targetAmount Decimal?   @db.Decimal(20, 8) // en la divisa del apartado
-  targetDate   DateTime?  @db.Date
-  color        String     @default("#0f766e")
-  archived     Boolean    @default(false)
-  isMain       Boolean    @default(false) // Caja del dueño
-  pinned       Boolean    @default(false) // Se muestra en el inicio
-  createdAt    DateTime   @default(now())
+  id             String     @id @default(cuid())
+  userId         String
+  currencyCode   String // Divisa del apartado; no está ligado a ninguna cuenta
+  name           String
+  kind           PocketKind @default(SAVINGS)
+  businessId     String? // null = Personal
+  targetAmount   Decimal?   @db.Decimal(20, 8) // en la divisa del apartado
+  targetDate     DateTime?  @db.Date
+  color          String     @default("#0f766e")
+  archived       Boolean    @default(false)
+  isMain         Boolean    @default(false) // Caja del dueño
+  pinned         Boolean    @default(false) // Se muestra en el inicio
+  // Reserva de gastos fijos del dueño: se llena antes que las partidas al entrar dinero a la Caja
+  isFixedReserve Boolean    @default(false)
+  createdAt      DateTime   @default(now())
 
-  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  business      Business?        @relation(fields: [businessId], references: [id], onDelete: SetNull)
-  movements     PocketMovement[]
-  budgetBuckets BudgetBucket[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business          Business?          @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  movements         PocketMovement[]
+  budgetBuckets     BudgetBucket[]
+  recurringExpenses RecurringExpense[]
 
   @@index([userId])
 }
