@@ -5,12 +5,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
-import { FIXED_RESERVE } from "@/lib/budget";
+import { FIXED_RESERVE, isDueInMonth } from "@/lib/budget";
 import { ensureFixedReservePocket } from "@/lib/fixed-reserve";
 import { assertOwned, OwnershipError } from "@/lib/guards";
 import { PocketError } from "@/lib/pockets";
 import { processAutoPayments, recordRecurringPayment } from "@/lib/recurring";
-import { monthRange, parseISODate } from "@/lib/utils";
+import { formatMonth, monthRange, parseISODate } from "@/lib/utils";
 import { amount, currencyCode, isoDate, recurringSchema } from "@/lib/validators";
 
 /**
@@ -161,11 +161,13 @@ export async function payRecurring(id: string, month: string, _prev: ActionState
   ]);
   if (txCount || markCount) return fail("Este gasto ya está marcado como pagado este mes");
 
+  if (!isDueInMonth(r, month)) return fail(`Este gasto no vence en ${formatMonth(month)}`);
+
   // La fecha del pago debe caer en el mes, para que el estado se calcule bien
   const parsedDate = isoDate.safeParse(form.date);
   if (!parsedDate.success) return zodError(parsedDate.error);
-  let date = parseISODate(parsedDate.data);
-  if (date < start || date >= end) date = start;
+  const date = parseISODate(parsedDate.data);
+  if (date < start || date >= end) return fail(`La fecha del pago debe ser de ${formatMonth(month)}`);
 
   // Solo marcarlo como pagado, sin tocar ninguna cuenta (el movimiento ya existe o no se quiere registrar)
   if (form.noMovement === "on") {

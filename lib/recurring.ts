@@ -4,7 +4,7 @@ import { dueDateInMonth, isDueInMonth } from "@/lib/budget";
 import { convert, type DecimalLike } from "@/lib/money";
 import { applyTransactionToPockets, AUTO_POCKET } from "@/lib/pockets";
 import { getRatesForDates } from "@/lib/rates";
-import { currentMonth, monthRange, todayISO, toISODate } from "@/lib/utils";
+import { currentMonth, monthRange, shiftMonth, todayISO, toISODate } from "@/lib/utils";
 
 /** Los pagos de gastos fijos se convierten siempre con la tasa BCV del día del pago. */
 const PAYMENT_RATE_SOURCE = "BCV" as const;
@@ -62,41 +62,50 @@ export async function recordRecurringPayment(
   });
 }
 
+/** Meses hacia atrás que se revisan por si el cron no corrió (o no había tasa) cuando vencían. */
+const CATCH_UP_MONTHS = 1;
+
 /**
- * Registra los gastos fijos automáticos (domiciliados) que vencen el mes actual, ya vencieron y aún no
- * tienen pago. Si se omite `userId` procesa todos los usuarios (para el cron).
- * Devuelve cuántos pagos se registraron.
+ * Registra los gastos fijos automáticos (domiciliados) que ya vencieron y aún no tienen pago, en el mes
+ * actual y en el anterior (por si el cron falló o no había tasa ese día). Si se omite `userId` procesa
+ * todos los usuarios (para el cron). Devuelve cuántos pagos se registraron.
  */
 export async function processAutoPayments(userId?: string) {
-  const month = currentMonth();
-  const { start, end } = monthRange(month);
   const today = todayISO();
-
-  const items = await prisma.recurringExpense.findMany({
-    where: {
-      ...(userId ? { userId } : {}),
-      active: true,
-      autoPay: true,
-      walletId: { not: null },
-      transactions: { none: { date: { gte: start, lt: end } } },
-      paidMarks: { none: { month } },
-    },
-    include: { wallet: { select: { id: true, currencyCode: true } } },
-  });
-
+  const months = Array.from({ length: CATCH_UP_MONTHS + 1 }, (_, i) => shiftMonth(currentMonth(), i - CATCH_UP_MONTHS));
   let created = 0;
-  for (const r of items) {
-    if (!r.wallet || !isDueInMonth(r, month)) continue;
-    const dueDate = dueDateInMonth(r.dayOfMonth, month);
-    const due = toISODate(dueDate);
-    // Aún no vence, o venció antes de crear el gasto fijo (ese mes ya se habría pagado aparte)
-    if (due > today || due < createdDay.format(r.createdAt)) continue;
-    try {
-      // Sale de su reserva de gastos fijos (o de la Caja de su dueño)
-      await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate, r.pocketId ?? AUTO_POCKET);
-      created++;
-    } catch {
-      // Sin tasa para convertir: se reintenta en la próxima ejecución
+
+  for (const month of months) {
+    const { start, end } = monthRange(month);
+    const items = await prisma.recurringExpense.findMany({
+      where: {
+        ...(userId ? { userId } : {}),
+        active: true,
+        autoPay: true,
+        walletId: { not: null },
+        transactions: { none: { date: { gte: start, lt: end } } },
+        paidMarks: { none: { month } },
+      },
+      include: { wallet: { select: { id: true, currencyCode: true } } },
+    });
+
+    for (const r of items) {
+      if (!r.wallet || !isDueInMonth(r, month)) continue;
+      const dueDate = dueDateInMonth(r.dayOfMonth, month);
+      const due = toISODate(dueDate);
+      // Aún no vence, o venció antes de crear el gasto fijo (ese mes ya se habría pagado aparte)
+      if (due > today || due < createdDay.format(r.createdAt)) continue;
+      try {
+        // Sale de su reserva de gastos fijos (o de la Caja de su dueño)
+        await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate, r.pocketId ?? AUTO_POCKET);
+        created++;
+      } catch (e) {
+        // Sin tasa para convertir: se reintenta en la próxima ejecución. Cualquier otro error se registra
+        // y se sigue con los demás gastos.
+        if (!(e instanceof Error && /tasa|Conversión/.test(e.message))) {
+          console.error(`[autopay] No se pudo registrar el gasto fijo ${r.id} (${month}):`, e);
+        }
+      }
     }
   }
   return created;

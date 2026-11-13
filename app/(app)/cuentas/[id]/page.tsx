@@ -22,6 +22,7 @@ async function CuentaPageContent({ params, searchParams }: PageProps<"/cuentas/[
   const currency: MovementsCurrency =
     ver === "usd" ? "USD" : ver === "cuenta" ? "ORIGINAL" : (user.movementsCurrency as MovementsCurrency);
   const transactions = await listTransactions(user.id, { walletId: id });
+  const hasLoans = transactions.some((t) => t.type === "LOAN_OUT" || t.type === "LOAN_IN");
 
   return (
     <>
@@ -44,6 +45,11 @@ async function CuentaPageContent({ params, searchParams }: PageProps<"/cuentas/[
             <p className="mt-1 text-xs text-muted">
               Saldo inicial {formatMoney(wallet.initialBalance, wallet.currencyCode)} · {transactions.length} movimientos
             </p>
+            {!wallet.projected.eq(wallet.balance) && (
+              <p className="mt-1 text-xs text-muted">
+                Con los movimientos de fechas futuras: {formatMoney(wallet.projected, wallet.currencyCode)}
+              </p>
+            )}
           </Card>
           {wallet.currencyCode !== "USD" && transactions.length > 0 && (
             <div className="flex items-center justify-between">
@@ -90,16 +96,26 @@ async function CuentaPageContent({ params, searchParams }: PageProps<"/cuentas/[
             </ActionForm>
           </Card>
           <Card className="flex flex-col gap-2">
-            <ConfirmButton action={toggleArchiveWallet.bind(null, wallet.id)} variant="secondary" className="w-full">
-              {wallet.archived ? "Desarchivar" : "Archivar"}
-            </ConfirmButton>
-            <ConfirmButton
-              action={deleteWallet.bind(null, wallet.id)}
-              confirm="¿Borrar la cuenta y TODOS sus movimientos? Esto no se puede deshacer."
-              className="w-full"
-            >
-              Borrar cuenta
-            </ConfirmButton>
+            {wallet.archived || wallet.balance.isZero() ? (
+              <ConfirmButton action={toggleArchiveWallet.bind(null, wallet.id)} variant="secondary" className="w-full">
+                {wallet.archived ? "Desarchivar" : "Archivar"}
+              </ConfirmButton>
+            ) : (
+              <p className="text-center text-xs text-muted">Para archivarla, deja el saldo en 0 (transfiere lo que tenga)</p>
+            )}
+            {hasLoans ? (
+              <p className="text-center text-xs text-muted">
+                Tiene préstamos: bórralos primero en Por cobrar o Deudas para poder borrar la cuenta
+              </p>
+            ) : (
+              <ConfirmButton
+                action={deleteWallet.bind(null, wallet.id)}
+                confirm="¿Borrar la cuenta y TODOS sus movimientos? Esto no se puede deshacer."
+                className="w-full"
+              >
+                Borrar cuenta
+              </ConfirmButton>
+            )}
             <Badge className="justify-center">Archivar la oculta sin perder el historial</Badge>
           </Card>
         </div>

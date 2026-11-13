@@ -81,7 +81,7 @@ export function ReceivableForm({
           <Field label="Monto">
             <Input name="amount" required inputMode="decimal" placeholder="0,00" />
           </Field>
-          <Field label="Divisa">
+          <Field label="Divisa" hint="En VES se guarda en USD a la tasa del día">
             <Select name="currencyCode" defaultValue="USD">
               <option value="USD">USD</option>
               <option value="VES">VES</option>

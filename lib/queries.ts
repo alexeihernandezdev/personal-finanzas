@@ -1,33 +1,43 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import type { Prisma, TransactionType } from "@/lib/generated/prisma/client";
-import { convert, dec, Decimal, INFLOW_TYPES, type DecimalLike } from "@/lib/money";
-import { monthRange } from "@/lib/utils";
+import { convert, dec, Decimal, signedAmount, type DecimalLike } from "@/lib/money";
+import { monthRange, parseISODate, todayISO } from "@/lib/utils";
+import { getCurrentRates } from "@/lib/rates";
 import { computeBudget, dueDateInMonth, isDueInMonth, nextDueMonth } from "@/lib/budget";
 import { getMonthlyPlan } from "@/lib/fixed-reserve";
 
 // Todas las funciones reciben el userId ya verificado por requireUser().
 
+/**
+ * Cuentas con su saldo a hoy (`balance`) y el saldo contando los movimientos con fecha futura
+ * (`projected`).
+ */
 export async function getWalletsWithBalance(userId: string, opts: { includeArchived?: boolean } = {}) {
-  const [wallets, sums] = await Promise.all([
+  const today = parseISODate(todayISO());
+  const [wallets, sums, upcoming] = await Promise.all([
     prisma.wallet.findMany({
       where: { userId, ...(opts.includeArchived ? {} : { archived: false }) },
       orderBy: [{ archived: "asc" }, { createdAt: "asc" }],
     }),
     prisma.transaction.groupBy({
       by: ["walletId", "type"],
-      where: { userId },
+      where: { userId, date: { lte: today } },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["walletId", "type"],
+      where: { userId, date: { gt: today } },
       _sum: { amount: true },
     }),
   ]);
+  const net = (walletId: string, rows: typeof sums) =>
+    rows
+      .filter((s) => s.walletId === walletId)
+      .reduce((acc, s) => acc.add(signedAmount(s.type, s._sum.amount ?? 0)), new Decimal(0));
   return wallets.map((w) => {
-    let balance = dec(w.initialBalance);
-    for (const s of sums) {
-      if (s.walletId !== w.id) continue;
-      const v = dec(s._sum.amount);
-      balance = (INFLOW_TYPES as readonly string[]).includes(s.type) ? balance.add(v) : balance.sub(v);
-    }
-    return { ...w, balance };
+    const balance = dec(w.initialBalance).add(net(w.id, sums));
+    return { ...w, balance, projected: balance.add(net(w.id, upcoming)) };
   });
 }
 
@@ -71,7 +81,8 @@ export async function getMoneySummary(userId: string, currency: string, vesPerUs
       }
     }, new Decimal(0));
   const total = sum(wallets.map((w) => ({ amount: w.balance, currency: w.currencyCode })));
-  const reserved = sum(pockets.map((p) => ({ amount: p.balance, currency: p.currencyCode })));
+  // Un apartado en negativo no libera dinero: cuenta como vacío
+  const reserved = sum(pockets.map((p) => ({ amount: Decimal.max(0, p.balance), currency: p.currencyCode })));
   return { total, reserved, available: total.sub(reserved) };
 }
 
@@ -356,8 +367,9 @@ export async function getReceivables(userId: string, opts: { onlyOpen?: boolean 
     },
     orderBy: [{ status: "asc" }, { expectedDate: "asc" }],
   });
+  const fallback = await currentFallbackRate();
   return items.map((r) => {
-    const collected = collectedAmount(r);
+    const collected = collectedAmount(r, fallback);
     return { ...r, collected, remaining: dec(r.amount).sub(collected) };
   });
 }
@@ -367,12 +379,19 @@ type ReceivableForCollected = {
   transactions: { type: string; amount: Prisma.Decimal; rateVesPerUsd: Prisma.Decimal | null; wallet: { currencyCode: string } }[];
 };
 
-export function collectedAmount(r: ReceivableForCollected) {
+/** Tasa actual (BCV, o Binance si no hay) para los movimientos que no guardaron la suya. */
+export async function currentFallbackRate() {
+  const rates = await getCurrentRates();
+  return rates.bcv ?? rates.binance;
+}
+
+/** Lo cobrado de una cuenta por cobrar, en su divisa. `fallback`: tasa para movimientos sin tasa guardada. */
+export function collectedAmount(r: ReceivableForCollected, fallback: DecimalLike | null = null) {
   return r.transactions
     .filter((t) => t.type === "INCOME" || t.type === "LOAN_REPAYMENT")
     .reduce((acc, t) => {
       try {
-        return acc.add(convert(t.amount, t.wallet.currencyCode, r.currencyCode, t.rateVesPerUsd));
+        return acc.add(convert(t.amount, t.wallet.currencyCode, r.currencyCode, t.rateVesPerUsd ?? fallback));
       } catch {
         return acc;
       }
@@ -392,18 +411,20 @@ export async function getDebts(userId: string, opts: { onlyOpen?: boolean } = {}
     },
     orderBy: [{ status: "asc" }, { dueDate: "asc" }],
   });
+  const fallback = await currentFallbackRate();
   return items.map((d) => {
-    const paid = paidAmount(d);
+    const paid = paidAmount(d, fallback);
     return { ...d, paid, remaining: dec(d.amount).sub(paid) };
   });
 }
 
-export function paidAmount(d: ReceivableForCollected) {
+/** Lo pagado de una deuda, en su divisa. `fallback`: tasa para movimientos sin tasa guardada. */
+export function paidAmount(d: ReceivableForCollected, fallback: DecimalLike | null = null) {
   return d.transactions
     .filter((t) => t.type === "EXPENSE" || t.type === "DEBT_PAYMENT")
     .reduce((acc, t) => {
       try {
-        return acc.add(convert(t.amount, t.wallet.currencyCode, d.currencyCode, t.rateVesPerUsd));
+        return acc.add(convert(t.amount, t.wallet.currencyCode, d.currencyCode, t.rateVesPerUsd ?? fallback));
       } catch {
         return acc;
       }

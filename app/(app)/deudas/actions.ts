@@ -5,14 +5,24 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { recomputeDebtStatus } from "@/lib/debts";
-import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { getDebtPaymentCategoryId } from "@/lib/defaults";
+import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
+import { convert, dec, formatMoney, type DecimalLike } from "@/lib/money";
+import { currentFallbackRate, paidAmount } from "@/lib/queries";
 import { applyTransactionToPockets, pocketFailure, pocketOfTransaction, revertTransactionPockets } from "@/lib/pockets";
-import { parseISODate, todayISO } from "@/lib/utils";
+import { parseISODate, todayISO, toISODate } from "@/lib/utils";
 import { debtPaymentSchema, debtSchema, debtTransactionEditSchema } from "@/lib/validators";
 
 /** Deshace lo que los movimientos de una deuda metieron o sacaron de los apartados. */
 const deleteDebtPocketMovements = (debtId: string) =>
   prisma.pocketMovement.deleteMany({ where: { sourceTransaction: { debtId } } });
+
+/** Lo que se debe en bolívares se guarda en dólares (igual que lo que te deben), a la tasa del día. */
+function owedInUsd(amount: string, currency: string, rate: DecimalLike | null) {
+  if (currency !== "VES") return { amount, currencyCode: currency };
+  if (!rate) return null;
+  return { amount: convert(amount, "VES", "USD", rate).toDecimalPlaces(2).toString(), currencyCode: "USD" };
+}
 
 export async function createDebt(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -27,10 +37,12 @@ export async function createDebt(_prev: ActionState, formData: FormData): Promis
   }
 
   if (d.kind === "LOAN_RECEIVED") {
-    // Un préstamo recibido mete el dinero en una cuenta: la deuda queda en la divisa de esa cuenta.
+    // Un préstamo recibido mete el dinero en una cuenta (en su divisa); lo que debes queda en dólares si es en Bs.
     if (!d.walletId) return fail("Elige la cuenta a la que entra el dinero prestado");
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: d.walletId } });
-    const rate = await snapshotRate(user.preferredRateSource);
+    const rate = await rateForDate(user.preferredRateSource, d.date ?? todayISO());
+    const owed = owedInUsd(d.amount, wallet.currencyCode, rate.rateVesPerUsd);
+    if (!owed) return fail("No hay tasa del día para pasar el préstamo a dólares");
     const date = parseISODate(d.date ?? todayISO());
     const description = `Préstamo de ${d.counterparty}`;
     try {
@@ -41,8 +53,7 @@ export async function createDebt(_prev: ActionState, formData: FormData): Promis
             kind: "LOAN_RECEIVED",
             counterparty: d.counterparty,
             description: d.description ?? "",
-            amount: d.amount,
-            currencyCode: wallet.currencyCode,
+            ...owed,
             dueDate: d.dueDate ? parseISODate(d.dueDate) : null,
             businessId: d.businessId ?? null,
             transactions: {
@@ -72,14 +83,16 @@ export async function createDebt(_prev: ActionState, formData: FormData): Promis
       return pocketFailure(e);
     }
   } else {
+    const rate = await rateForDate(user.preferredRateSource, todayISO());
+    const owed = owedInUsd(d.amount, d.currencyCode, rate.rateVesPerUsd);
+    if (!owed) return fail("No hay tasa del día para pasar el monto a dólares");
     await prisma.debt.create({
       data: {
         userId: user.id,
         kind: "PAYABLE",
         counterparty: d.counterparty,
         description: d.description ?? "",
-        amount: d.amount,
-        currencyCode: d.currencyCode,
+        ...owed,
         dueDate: d.dueDate ? parseISODate(d.dueDate) : null,
         businessId: d.businessId ?? null,
       },
@@ -95,15 +108,31 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
   if (!parsed.success) return zodError(parsed.error);
   const p = parsed.data;
   const [d, wallet] = await Promise.all([
-    prisma.debt.findFirst({ where: { id: p.debtId, userId: user.id } }),
+    prisma.debt.findFirst({
+      where: { id: p.debtId, userId: user.id },
+      include: { transactions: { include: { wallet: { select: { currencyCode: true } } } } },
+    }),
     prisma.wallet.findFirst({ where: { id: p.walletId, userId: user.id } }),
   ]);
   if (!d || !wallet) return fail("Registro no encontrado");
   if (d.status === "CANCELLED" || d.status === "SETTLED") return fail("Esta deuda ya está cerrada");
 
   const isLoan = d.kind === "LOAN_RECEIVED";
-  const rate = await snapshotRate(user.preferredRateSource);
+  const rate = await rateForDate(user.preferredRateSource, p.date);
   const date = parseISODate(p.date);
+
+  // No se puede pagar más de lo que falta
+  const remaining = dec(d.amount).sub(paidAmount(d, await currentFallbackRate()));
+  let inRecord;
+  try {
+    inRecord = convert(p.amount, wallet.currencyCode, d.currencyCode, rate.rateVesPerUsd);
+  } catch {
+    return fail("No hay tasa disponible para comparar el pago con lo pendiente");
+  }
+  if (inRecord.toDecimalPlaces(2).gt(remaining.toDecimalPlaces(2).add("0.01"))) {
+    return fail(`Solo faltan ${formatMoney(remaining, d.currencyCode)} por pagar`);
+  }
+  const categoryId = isLoan ? null : await getDebtPaymentCategoryId(user.id);
   const description = isLoan
     ? `Pago de préstamo a ${d.counterparty}`
     : `Pago: ${d.counterparty}${d.description ? ` · ${d.description}` : ""}`;
@@ -119,6 +148,7 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
           date,
           description,
           debtId: d.id,
+          categoryId,
           ...rate,
           ...(isLoan ? {} : { splits: { create: [{ businessId: d.businessId, amount: p.amount }] } }),
         },
@@ -139,11 +169,11 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
         rate: rate.rateVesPerUsd,
         cajaCurrency: user.displayCurrency,
       });
+      await recomputeDebtStatus(d.id, tx);
     });
   } catch (e) {
     return pocketFailure(e);
   }
-  await recomputeDebtStatus(d.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Pago registrado" };
 }
@@ -187,13 +217,20 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
   if (!tx?.debt || !wallet) return fail("Registro no encontrado");
   const debt = tx.debt;
   const date = parseISODate(p.date);
+  // Si cambia la fecha se usa la tasa del nuevo día; si no, la que ya tenía
+  const rate =
+    toISODate(tx.date) === p.date && tx.rateVesPerUsd
+      ? { rateVesPerUsd: tx.rateVesPerUsd.toString(), rateSource: tx.rateSource }
+      : await rateForDate(user.preferredRateSource, p.date);
 
   try {
     await prisma.$transaction(async (db) => {
       if (tx.type === "LOAN_IN") {
-        // La deuda del préstamo vive en la divisa de la cuenta que recibió el dinero
-        await db.transaction.update({ where: { id: tx.id }, data: { walletId: wallet.id, amount: p.amount, date } });
-        await db.debt.update({ where: { id: debt.id }, data: { amount: p.amount, currencyCode: wallet.currencyCode } });
+        // Lo que se debe por el préstamo sigue a lo que entró (en dólares si entró en bolívares)
+        const owed = owedInUsd(p.amount, wallet.currencyCode, rate.rateVesPerUsd);
+        if (!owed) throw new Error("No hay tasa disponible para convertir");
+        await db.transaction.update({ where: { id: tx.id }, data: { walletId: wallet.id, amount: p.amount, date, ...rate } });
+        await db.debt.update({ where: { id: debt.id }, data: owed });
       } else {
         await db.transactionSplit.deleteMany({ where: { transactionId: tx.id } });
         await db.transaction.update({
@@ -202,6 +239,7 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
             walletId: wallet.id,
             amount: p.amount,
             date,
+            ...rate,
             ...(tx.type === "EXPENSE" ? { splits: { create: [{ businessId: debt.businessId, amount: p.amount }] } } : {}),
           },
         });
@@ -222,14 +260,14 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
         splits: [{ businessId: debt.businessId, amount: p.amount }],
         pocketId,
         distribute: false,
-        rate: tx.rateVesPerUsd?.toString() ?? null,
+        rate: rate.rateVesPerUsd,
         cajaCurrency: user.displayCurrency,
       });
     });
+    await recomputeDebtStatus(debt.id);
   } catch (e) {
     return pocketFailure(e);
   }
-  await recomputeDebtStatus(tx.debt.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Movimiento actualizado" };
 }
@@ -239,10 +277,10 @@ export async function deleteDebtPayment(txId: string) {
   const user = await requireUser();
   const tx = await prisma.transaction.findFirst({ where: { id: txId, userId: user.id, debtId: { not: null } } });
   if (!tx || tx.type === "LOAN_IN") return;
-  await prisma.$transaction([
-    prisma.pocketMovement.deleteMany({ where: { sourceTransactionId: tx.id } }),
-    prisma.transaction.delete({ where: { id: tx.id } }),
-  ]);
-  await recomputeDebtStatus(tx.debtId!);
+  // Lo que el pago sacó de los apartados se borra con él (en cascada)
+  await prisma.$transaction(async (db) => {
+    await db.transaction.delete({ where: { id: tx.id } });
+    await recomputeDebtStatus(tx.debtId!, db);
+  });
   revalidatePath("/", "layout");
 }

@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
-import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
-import { convert } from "@/lib/money";
+import { getCollectionCategoryId } from "@/lib/defaults";
+import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
+import { convert, dec, formatMoney } from "@/lib/money";
 import { applyTransactionToPockets, pocketFailure } from "@/lib/pockets";
+import { collectedAmount, currentFallbackRate } from "@/lib/queries";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { paymentSchema, receivableSchema } from "@/lib/validators";
@@ -23,7 +25,8 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
     throw e;
   }
 
-  const rate = await snapshotRate(user.preferredRateSource);
+  // Tasa del día del préstamo (o de hoy si es una cuenta por cobrar)
+  const rate = await rateForDate(user.preferredRateSource, d.date ?? todayISO());
   /** Lo registrado en bolívares se guarda en dólares, a la tasa del día. */
   const inUsd = (currency: string) =>
     currency === "VES"
@@ -102,15 +105,35 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
   if (!parsed.success) return zodError(parsed.error);
   const d = parsed.data;
   const [r, wallet] = await Promise.all([
-    prisma.receivable.findFirst({ where: { id: d.receivableId, userId: user.id } }),
+    prisma.receivable.findFirst({
+      where: { id: d.receivableId, userId: user.id },
+      include: { transactions: { include: { wallet: { select: { currencyCode: true } } } } },
+    }),
     prisma.wallet.findFirst({ where: { id: d.walletId, userId: user.id } }),
   ]);
   if (!r || !wallet) return fail("Registro no encontrado");
   if (r.status === "CANCELLED" || r.status === "SETTLED") return fail("Este registro ya está cerrado");
 
   const isLoan = r.kind === "LOAN_GIVEN";
-  const rate = await snapshotRate(user.preferredRateSource);
+  const rate = await rateForDate(user.preferredRateSource, d.date);
   const date = parseISODate(d.date);
+
+  // No se puede cobrar más de lo que falta
+  const collected = collectedAmount(
+    { currencyCode: r.currencyCode, transactions: r.transactions },
+    await currentFallbackRate(),
+  );
+  const remaining = dec(r.amount).sub(collected);
+  let inRecord;
+  try {
+    inRecord = convert(d.amount, wallet.currencyCode, r.currencyCode, rate.rateVesPerUsd);
+  } catch {
+    return fail("No hay tasa disponible para comparar el cobro con lo pendiente");
+  }
+  if (inRecord.toDecimalPlaces(2).gt(remaining.toDecimalPlaces(2).add("0.01"))) {
+    return fail(`Solo faltan ${formatMoney(remaining, r.currencyCode)} por cobrar`);
+  }
+  const categoryId = isLoan ? null : await getCollectionCategoryId(user.id);
   const description = isLoan
     ? `Devolución de ${r.counterparty}`
     : `Cobro: ${r.counterparty}${r.description ? ` · ${r.description}` : ""}`;
@@ -125,6 +148,7 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
           date,
           description,
           receivableId: r.id,
+          categoryId,
           ...rate,
           // Solo los ingresos cuentan para los negocios; la devolución de un préstamo no es ingreso
           ...(isLoan ? {} : { splits: { create: [{ businessId: r.businessId, amount: d.amount }] } }),
@@ -146,11 +170,11 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
         rate: rate.rateVesPerUsd,
         cajaCurrency: user.displayCurrency,
       });
+      await recomputeReceivableStatus(r.id, tx);
     });
   } catch (e) {
     return pocketFailure(e);
   }
-  await recomputeReceivableStatus(r.id);
   revalidatePath("/", "layout");
   return { ok: true, message: "Cobro registrado" };
 }

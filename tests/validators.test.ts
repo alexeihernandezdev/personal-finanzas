@@ -9,6 +9,10 @@ describe("normalizeAmount", () => {
     ["1,234.56", "1234.56"],
     ["Bs. 1.000,00", "1000.00"],
     ["$ 20", "20"],
+    ["1.234", "1234"],
+    ["1.234.567", "1234567"],
+    ["0.500", "0.500"],
+    ["12.5", "12.5"],
   ])("%s -> %s", (input, out) => expect(normalizeAmount(input)).toBe(out));
   it("rechaza texto", () => {
     expect(normalizeAmount("abc")).toBeNull();

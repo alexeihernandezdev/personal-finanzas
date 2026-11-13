@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bucketShares, computeBudget, formatPercent, isDueInMonth, nextDueDate, nextDueMonth, planFixedReserve, reserveFraction } from "@/lib/budget";
+import { bucketAmounts, bucketShares, computeBudget, formatPercent, isDueInMonth, nextDueDate, nextDueMonth, planFixedReserve, reserveFraction } from "@/lib/budget";
 import { Decimal } from "@/lib/money";
 
 const bucket = (name: string, percent: string) => ({ id: name, name, percent, color: "#000000" });
@@ -139,5 +139,34 @@ describe("bucketShares", () => {
   });
   it("sin ingresos fijos usa el % configurado", () => {
     expect(bucketShares("0", "0", [{ percent: "20" }]).map((s) => s.toFixed(2))).toEqual(["20.00"]);
+  });
+});
+
+describe("bucketAmounts", () => {
+  const buckets = [{ percent: "20" }, { percent: "10" }];
+
+  it("dentro del plan usa el % ajustado (p·I / (I − F))", () => {
+    // I = 1000, F = 500: el 20% del ingreso es el 40% de lo que sobra
+    const [a, b] = bucketAmounts("500", "0", "1000", "500", buckets);
+    expect(a.toString()).toBe("200");
+    expect(b.toString()).toBe("100");
+  });
+
+  it("un ingreso extra por encima del plan usa el % configurado", () => {
+    const [a, b] = bucketAmounts("300", "300", "1000", "500", buckets);
+    expect(a.toString()).toBe("60");
+    expect(b.toString()).toBe("30");
+  });
+
+  it("mezcla la parte planificada y la extra", () => {
+    // 100 dentro del plan (40% / 20%) + 200 extra (20% / 10%)
+    const [a, b] = bucketAmounts("300", "200", "1000", "500", buckets);
+    expect(a.toString()).toBe("80");
+    expect(b.toString()).toBe("40");
+  });
+
+  it("el extra nunca supera lo que hay para repartir", () => {
+    const [a] = bucketAmounts("100", "500", "1000", "500", buckets);
+    expect(a.toString()).toBe("20");
   });
 });

@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import type { RateSource } from "@/lib/generated/prisma/client";
-import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
 import { dec, Decimal, formatMoney, type DecimalLike } from "@/lib/money";
 import { allocateToPocket, ensureMainPocket, withdrawFromPocket } from "@/lib/pockets";
 import { getMoneySummary, getPockets } from "@/lib/queries";
@@ -162,7 +162,7 @@ export async function transferPocketMoney(_prev: ActionState, formData: FormData
   if (!amount.gt(0)) return fail("No hay nada que pasar");
   if (amount.gt(from.balance)) return fail(`${from.name} solo tiene ${formatMoney(from.balance, from.currencyCode)}`);
 
-  const { rateVesPerUsd } = await snapshotRate(user.preferredRateSource);
+  const { rateVesPerUsd } = await rateForDate(user.preferredRateSource, t.date);
   const ctx = {
     userId: user.id,
     date: parseISODate(t.date),

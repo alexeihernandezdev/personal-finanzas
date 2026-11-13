@@ -7,7 +7,7 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { SUGGESTED_BUCKETS } from "@/lib/budget";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
 import { convert, dec, Decimal, formatMoney } from "@/lib/money";
-import { ensureMainPocket } from "@/lib/pockets";
+import { allocatedFromTransaction, ensureMainPocket } from "@/lib/pockets";
 import { getMoneySummary } from "@/lib/queries";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { budgetBucketSchema, fixedBufferSchema, normalizeAmount } from "@/lib/validators";
@@ -147,7 +147,7 @@ export async function updateFixedBuffer(_prev: ActionState, formData: FormData):
 
 /**
  * Reparte un ingreso entre los apartados de las partidas (campos `amount:<bucketId>`, en la divisa del
- * ingreso). Si el apartado está en otra cuenta registra primero la transferencia y luego aparta el dinero.
+ * ingreso). Entre lo ya apartado de ese ingreso y lo nuevo no se puede pasar de su monto.
  */
 export async function distributeIncome(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -155,12 +155,14 @@ export async function distributeIncome(_prev: ActionState, formData: FormData): 
   if (typeof incomeId !== "string" || !incomeId) return fail("Elige un ingreso");
   const income = await prisma.transaction.findFirst({
     where: { id: incomeId, userId: user.id, type: "INCOME" },
-    include: { wallet: true },
+    include: { wallet: true, splits: { select: { businessId: true } } },
   });
   if (!income) return fail("Ingreso no encontrado");
 
   const businessId = await ownerFrom(user.id, formData);
   if (businessId === undefined) return fail("Negocio inválido");
+  const owners = income.splits.length ? income.splits.map((s) => s.businessId) : [null];
+  if (!owners.includes(businessId)) return fail("Este ingreso no es de ese presupuesto");
   const buckets = await prisma.budgetBucket.findMany({
     where: { userId: user.id, businessId, pocket: { archived: false } },
     include: { pocket: true },
@@ -191,14 +193,30 @@ export async function distributeIncome(_prev: ActionState, formData: FormData): 
   const from = income.wallet;
   const total = lines.reduce((acc, l) => acc.add(l.amount), new Decimal(0));
   const rate = await snapshotRate(user.preferredRateSource);
+  // Para cambiar de divisa se usa la tasa del día del ingreso; si no la tiene, la actual
+  const conversionRate = income.rateVesPerUsd ?? rate.rateVesPerUsd;
+
+  // Lo que este ingreso ya dejó apartado (al registrarlo o en repartos anteriores)
+  let already: Decimal;
+  try {
+    already = await allocatedFromTransaction(prisma, income.id, from.currencyCode, conversionRate);
+  } catch {
+    return fail("No hay tasa disponible para convertir a la divisa de los apartados");
+  }
+  const left = Decimal.max(0, dec(income.amount).sub(already));
+  if (total.toDecimalPlaces(2).gt(left.toDecimalPlaces(2))) {
+    return fail(
+      left.isZero()
+        ? "Este ingreso ya está repartido por completo"
+        : `De este ingreso solo quedan ${formatMoney(left, from.currencyCode)} por repartir`,
+    );
+  }
   // Lo apartado sale del dinero libre de todas las cuentas
   const { available } = await getMoneySummary(user.id, from.currencyCode, rate.rateVesPerUsd);
   if (total.gt(available)) {
     return fail(`Solo tienes ${formatMoney(available, from.currencyCode)} disponibles para apartar`);
   }
 
-  // Para cambiar de divisa se usa la tasa del día del ingreso; si no la tiene, la actual
-  const conversionRate = income.rateVesPerUsd ?? rate.rateVesPerUsd;
   const date = parseISODate(todayISO());
   const source = income.description || "ingreso";
   let received: Decimal[];

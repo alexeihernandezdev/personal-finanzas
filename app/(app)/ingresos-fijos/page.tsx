@@ -8,7 +8,8 @@ import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getCategories, getRecurringIncome, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
-import { cn } from "@/lib/utils";
+import { FREQUENCIES, nextDueMonth } from "@/lib/budget";
+import { cn, currentMonth, formatMonth } from "@/lib/utils";
 import { createRecurringIncome, deleteRecurringIncome, toggleRecurringIncome, updateRecurringIncome } from "./actions";
 
 async function IngresosFijosPageContent() {
@@ -25,7 +26,8 @@ async function IngresosFijosPageContent() {
     .filter((i) => i.active)
     .reduce((acc, i) => {
       try {
-        return acc.add(convert(i.amount, i.currencyCode, user.displayCurrency, rate));
+        // Los que no son mensuales cuentan su parte de cada mes (anual / 12…)
+        return acc.add(convert(i.amount, i.currencyCode, user.displayCurrency, rate).div(Math.max(1, i.intervalMonths)));
       } catch {
         return acc;
       }
@@ -60,6 +62,8 @@ async function IngresosFijosPageContent() {
                       <div className="min-w-0 flex-1">
                         <p className="font-medium">{r.name}</p>
                         <p className="text-xs text-muted">
+                          {r.intervalMonths > 1 &&
+                            `${FREQUENCIES.find((f) => f.months === r.intervalMonths)?.label ?? `Cada ${r.intervalMonths} meses`} · próximo en ${formatMonth(nextDueMonth(r, currentMonth()))} · `}
                           Día {r.dayOfMonth}
                           {r.category && ` · ${r.category.name}`}
                           {r.business && ` · ${r.business.name}`}
@@ -116,6 +120,8 @@ type IncomeDefaults = {
   amount: Decimal;
   currencyCode: string;
   dayOfMonth: number;
+  intervalMonths: number;
+  startMonth: string | null;
   walletId: string | null;
   categoryId: string | null;
   businessId: string | null;
@@ -151,8 +157,29 @@ function IncomeFields({
           </Select>
         </Field>
       </div>
-      <Field label="Día del mes en que cobras">
-        <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={defaults?.dayOfMonth ?? 1} />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Frecuencia">
+          <Select name="intervalMonths" defaultValue={defaults?.intervalMonths ?? 1}>
+            {FREQUENCIES.map((f) => (
+              <option key={f.months} value={f.months}>
+                {f.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Día del mes">
+          <Input name="dayOfMonth" type="number" min={1} max={31} required defaultValue={defaults?.dayOfMonth ?? 1} />
+        </Field>
+      </div>
+      <Field label="Mes del próximo cobro">
+        <Input
+          name="startMonth"
+          type="month"
+          defaultValue={defaults?.startMonth ? nextDueMonth(defaults, currentMonth()) : currentMonth()}
+        />
+        <span className="text-xs text-muted">
+          Para los trimestrales, semestrales y anuales. Si cobras por quincena, crea uno por cada quincena.
+        </span>
       </Field>
       <Field label="Cuenta donde entra">
         <Select name="walletId" defaultValue={defaults?.walletId ?? ""}>

@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import type { RateSource } from "@/lib/generated/prisma/client";
-import { getCurrentRates, pickRate } from "@/lib/rates";
+import { getCurrentRates, getRatesForDates, pickRate } from "@/lib/rates";
+import { parseISODate, todayISO } from "@/lib/utils";
 
 export class OwnershipError extends Error {}
 
@@ -26,5 +27,15 @@ export async function assertOwned(
 export async function snapshotRate(source: RateSource) {
   const rates = await getCurrentRates({ refreshIfStale: true });
   const rate = pickRate(rates, source);
+  return { rateVesPerUsd: rate?.toString() ?? null, rateSource: rate ? source : null };
+}
+
+/**
+ * Tasa (VES por USD) del día de un movimiento: la vigente al cierre de esa fecha. Para hoy (o una
+ * fecha futura) es la tasa actual, refrescándola si está vieja.
+ */
+export async function rateForDate(source: RateSource, date: string) {
+  if (date >= todayISO()) return snapshotRate(source);
+  const rate = (await getRatesForDates([parseISODate(date)], source)).get(date) ?? null;
   return { rateVesPerUsd: rate?.toString() ?? null, rateSource: rate ? source : null };
 }

@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowUpRight,
+  ChevronRight,
   HandCoins,
   Pencil,
   SlidersHorizontal,
@@ -103,7 +104,7 @@ export async function TransactionList({
           const Icon = TYPE_ICONS[t.type] ?? ArrowLeftRight;
           const businessSplits = t.splits.filter((s) => s.business);
           const hasBadges = !editable || t.recurring || businessSplits.length > 0;
-          const confirm = t.transferGroupId
+          const confirm = t.transferGroupId && t.type.startsWith("TRANSFER")
             ? "Se borrarán las dos partes de la transferencia. ¿Continuar?"
             : "¿Borrar este movimiento?";
           return (
@@ -155,14 +156,26 @@ export async function TransactionList({
                     <Pencil className="size-3.5" />
                   </Link>
                 )}
-                <ConfirmButton
-                  action={deleteTransaction.bind(null, t.id)}
-                  confirm={confirm}
-                  variant="ghost"
-                  className="size-10 px-0 text-muted sm:size-8"
-                >
-                  <X className="size-4 sm:size-3.5" aria-label="Borrar" />
-                </ConfirmButton>
+                {t.type === "LOAN_OUT" || t.type === "LOAN_IN" ? (
+                  // El préstamo se borra desde su registro, junto con sus cobros o pagos
+                  <Link
+                    href={t.type === "LOAN_OUT" ? "/por-cobrar" : "/deudas"}
+                    className="flex size-10 items-center justify-center rounded-lg text-muted hover:bg-background hover:text-foreground sm:size-8"
+                    title={t.type === "LOAN_OUT" ? "Se gestiona en Por cobrar" : "Se gestiona en Deudas"}
+                    aria-label={t.type === "LOAN_OUT" ? "Ver en Por cobrar" : "Ver en Deudas"}
+                  >
+                    <ChevronRight className="size-4 sm:size-3.5" />
+                  </Link>
+                ) : (
+                  <ConfirmButton
+                    action={deleteTransaction.bind(null, t.id)}
+                    confirm={confirm}
+                    variant="ghost"
+                    className="size-10 px-0 text-muted sm:size-8"
+                  >
+                    <X className="size-4 sm:size-3.5" aria-label="Borrar" />
+                  </ConfirmButton>
+                )}
               </div>
             </li>
           );

@@ -185,6 +185,29 @@ export function bucketShares(planIncome: DecimalLike, planFixed: DecimalLike, bu
   return total.gt(100) ? raw.map((p) => p.mul(100).div(total)) : raw;
 }
 
+/**
+ * Montos que se lleva cada partida de `rest` (lo que sobró tras reservar los gastos fijos). Hasta
+ * completar el ingreso fijo del mes se usa el % ajustado de `bucketShares`; `extra` (la parte de `rest`
+ * que entra por encima de lo planificado) se reparte con el % configurado, para que un ingreso extra no
+ * engorde las partidas. Montos redondeados hacia abajo a 2 decimales.
+ */
+export function bucketAmounts(
+  rest: DecimalLike,
+  extra: DecimalLike,
+  planIncome: DecimalLike,
+  planFixed: DecimalLike,
+  buckets: { percent: DecimalLike }[],
+) {
+  const total = dec(rest);
+  const over = Decimal.min(total, Decimal.max(0, dec(extra)));
+  const planned = total.sub(over);
+  const shares = bucketShares(planIncome, planFixed, buckets);
+  const raw = bucketShares(0, 0, buckets);
+  return buckets.map((_, i) =>
+    planned.mul(shares[i]).add(over.mul(raw[i])).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN),
+  );
+}
+
 const percentFormat = new Intl.NumberFormat("es-VE", { maximumFractionDigits: 1 });
 
 export function formatPercent(value: DecimalLike) {

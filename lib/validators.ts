@@ -2,6 +2,7 @@ import { z } from "zod";
 
 /**
  * Acepta "1234.56", "1234,56", "1.234,56" o "1,234.56" y devuelve un string decimal normalizado.
+ * Solo con puntos agrupando de a tres cifras ("1.234", "1.234.567") el punto es de miles, como en es-VE.
  */
 export function normalizeAmount(raw: string): string | null {
   let s = raw.replace(/\s|\$|Bs\.?/gi, "");
@@ -13,6 +14,8 @@ export function normalizeAmount(raw: string): string | null {
     s = lastComma > lastDot ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
   } else if (lastComma > -1) {
     s = s.replace(",", ".");
+  } else if (/^[1-9]\d{0,2}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
   }
   return /^\d+(\.\d+)?$/.test(s) ? s : null;
 }
@@ -97,21 +100,26 @@ export const transferSchema = z.object({
   description: z.string().max(200).optional(),
 });
 
+// Cada cuántos meses se paga (o cobra) y un mes (yyyy-mm) en que toca
+const intervalMonths = z.coerce
+  .number()
+  .refine((v) => [1, 3, 6, 12].includes(v), "Frecuencia inválida")
+  .default(1);
+const startMonth = z
+  .string()
+  .optional()
+  .transform((v) => v || undefined)
+  .pipe(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Mes inválido").optional());
+/** Los que no son mensuales necesitan un mes de referencia. */
+const hasStartMonth = (d: { intervalMonths: number; startMonth?: string }) => d.intervalMonths === 1 || Boolean(d.startMonth);
+
 export const recurringSchema = z.object({
   name: z.string({ error: "Escribe un nombre" }).min(1).max(80),
   amount: amount(),
   currencyCode,
   dayOfMonth: z.coerce.number().int().min(1, "Día entre 1 y 31").max(31, "Día entre 1 y 31"),
-  // Cada cuántos meses se paga y un mes (yyyy-mm) en que toca pagarlo
-  intervalMonths: z.coerce
-    .number()
-    .refine((v) => [1, 3, 6, 12].includes(v), "Frecuencia inválida")
-    .default(1),
-  startMonth: z
-    .string()
-    .optional()
-    .transform((v) => v || undefined)
-    .pipe(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Mes inválido").optional()),
+  intervalMonths,
+  startMonth,
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
@@ -124,20 +132,19 @@ export const recurringSchema = z.object({
 }).refine((d) => !d.autoPay || d.walletId, {
   message: "Los pagos automáticos necesitan una cuenta habitual",
   path: ["walletId"],
-}).refine((d) => d.intervalMonths === 1 || d.startMonth, {
-  message: "Indica el mes del próximo pago",
-  path: ["startMonth"],
-});
+}).refine(hasStartMonth, { message: "Indica el mes del próximo pago", path: ["startMonth"] });
 
 export const recurringIncomeSchema = z.object({
   name: z.string({ error: "Escribe un nombre" }).min(1).max(80),
   amount: amount(),
   currencyCode,
   dayOfMonth: z.coerce.number().int().min(1, "Día entre 1 y 31").max(31, "Día entre 1 y 31"),
+  intervalMonths,
+  startMonth,
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
-});
+}).refine(hasStartMonth, { message: "Indica el mes del próximo cobro", path: ["startMonth"] });
 
 export const budgetBucketSchema = z.object({
   name: z.string({ error: "Escribe un nombre" }).min(1).max(60),

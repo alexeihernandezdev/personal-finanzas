@@ -35,12 +35,12 @@ export async function ensureFixedReservePocket(db: Db, userId: string, businessI
 }
 
 /**
- * Ingreso fijo y gastos fijos (sin colchón) de un dueño al mes, en `currency`. Los gastos que no son
+ * Ingreso fijo y gastos fijos (sin colchón) de un dueño al mes, en `currency`. Los que no son
  * mensuales cuentan su parte de cada mes (anual / 12…). Los montos sin tasa para convertir se omiten.
  */
 export async function getMonthlyPlan(db: Db, userId: string, businessId: string | null, currency: string, rate: DecimalLike | null | undefined) {
   const [incomes, expenses, user] = await Promise.all([
-    db.recurringIncome.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true } }),
+    db.recurringIncome.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true, intervalMonths: true } }),
     db.recurringExpense.findMany({ where: { userId, businessId, active: true }, select: { amount: true, currencyCode: true, intervalMonths: true } }),
     db.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } }),
   ]);

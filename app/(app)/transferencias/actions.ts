@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { getFeeCategoryId } from "@/lib/defaults";
-import { snapshotRate } from "@/lib/guards";
+import { rateForDate } from "@/lib/guards";
 import { dec } from "@/lib/money";
 import { parseISODate } from "@/lib/utils";
 import { normalizeAmount, transferSchema } from "@/lib/validators";
@@ -38,7 +38,8 @@ export async function createTransfer(_prev: ActionState, formData: FormData): Pr
 
   const groupId = randomUUID();
   const date = parseISODate(data.date);
-  const rate = await snapshotRate(user.preferredRateSource);
+  // Entre bolívares y dólares la tasa es la que se aplicó de verdad; si no, la del día de la transferencia
+  const rate = impliedRate(from.currencyCode, data.amountOut, to.currencyCode, amountIn) ?? (await rateForDate(user.preferredRateSource, data.date));
   const description = data.description ?? `${from.name} → ${to.name}`;
   const feeCategoryId = fee.gt(0) ? await getFeeCategoryId(user.id) : null;
 
@@ -59,6 +60,8 @@ export async function createTransfer(_prev: ActionState, formData: FormData): Pr
           date,
           description: `Comisión: ${description}`,
           categoryId: feeCategoryId,
+          // Parte de la transferencia: se borra con ella
+          transferGroupId: groupId,
           ...rate,
           splits: { create: [{ businessId: null, amount: fee.toString() }] },
         },
@@ -68,4 +71,14 @@ export async function createTransfer(_prev: ActionState, formData: FormData): Pr
 
   revalidatePath("/", "layout");
   return { ok: true, message: "Transferencia registrada" };
+}
+
+const USD_LIKE = ["USD", "USDT"];
+
+/** Tasa VES por USD implícita en una transferencia entre bolívares y dólares; null si no aplica. */
+function impliedRate(fromCurrency: string, amountOut: string, toCurrency: string, amountIn: string) {
+  const ves = fromCurrency === "VES" ? amountOut : toCurrency === "VES" ? amountIn : null;
+  const usd = USD_LIKE.includes(fromCurrency) ? amountOut : USD_LIKE.includes(toCurrency) ? amountIn : null;
+  if (!ves || !usd || dec(usd).isZero()) return null;
+  return { rateVesPerUsd: dec(ves).div(dec(usd)).toDecimalPlaces(8).toString(), rateSource: null };
 }

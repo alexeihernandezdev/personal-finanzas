@@ -5,12 +5,12 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, zodError, type ActionState } from "@/lib/action";
-import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
-import { splitsMatchTotal } from "@/lib/money";
+import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
+import { dec, formatMoney, splitsMatchTotal } from "@/lib/money";
 import { recomputeDebtStatus } from "@/lib/debts";
-import { applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
+import { allocatedFromTransaction, applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
-import { parseISODate } from "@/lib/utils";
+import { parseISODate, toISODate } from "@/lib/utils";
 import { transactionSchema } from "@/lib/validators";
 
 function parseTransactionForm(formData: FormData) {
@@ -101,7 +101,8 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
   const result = await validateAndBuild(user.id, formData);
   if (!result.data) return result.error;
   const { data, splits } = result;
-  const rate = await snapshotRate(user.preferredRateSource);
+  // Tasa del día del movimiento (no la de hoy si se registra con fecha pasada)
+  const rate = await rateForDate(user.preferredRateSource, data.date);
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -129,16 +130,37 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
 
 export async function updateTransaction(id: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
-  const existing = await prisma.transaction.findFirst({ where: { id, userId: user.id } });
+  const existing = await prisma.transaction.findFirst({ where: { id, userId: user.id }, include: { wallet: true } });
   if (!existing || (existing.type !== "INCOME" && existing.type !== "EXPENSE")) return fail("Movimiento no encontrado");
   const result = await validateAndBuild(user.id, formData);
   if (!result.data) return result.error;
   const { data, splits } = result;
+  // Un cobro o un pago de deuda no puede cambiar de tipo: dejaría de contar en su registro
+  if ((existing.receivableId || existing.debtId) && data.type !== existing.type) {
+    return fail("Este movimiento es un cobro o pago de una deuda: no puede cambiar de tipo");
+  }
 
-  const rate = existing.rateVesPerUsd?.toString() ?? (await snapshotRate(user.preferredRateSource)).rateVesPerUsd;
+  // Si cambia la fecha se usa la tasa del nuevo día; si no, la que ya tenía
+  const rate =
+    toISODate(existing.date) === data.date && existing.rateVesPerUsd
+      ? { rateVesPerUsd: existing.rateVesPerUsd.toString(), rateSource: existing.rateSource }
+      : await rateForDate(user.preferredRateSource, data.date);
+  const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: data.walletId }, select: { currencyCode: true } });
+  // Los repartos manuales del presupuesto se conservan si siguen teniendo sentido
+  const keepManual = data.type === "INCOME" && existing.type === "INCOME" && wallet.currencyCode === existing.wallet.currencyCode;
 
   try {
     await prisma.$transaction(async (tx) => {
+      if (keepManual) {
+        const manual = await allocatedFromTransaction(tx, id, wallet.currencyCode, rate.rateVesPerUsd, { manualOnly: true });
+        if (manual.toDecimalPlaces(2).gt(dec(data.amount))) {
+          throw new EditError(
+            `Ya repartiste ${formatMoney(manual, wallet.currencyCode)} de este ingreso: borra ese reparto en Apartados antes de bajar el monto`,
+          );
+        }
+      } else {
+        await tx.pocketMovement.deleteMany({ where: { sourceTransactionId: id } });
+      }
       await tx.transactionSplit.deleteMany({ where: { transactionId: id } });
       await tx.transaction.update({
         where: { id },
@@ -149,34 +171,43 @@ export async function updateTransaction(id: string, _prev: ActionState, formData
           date: parseISODate(data.date),
           categoryId: data.categoryId ?? null,
           description: data.description ?? "",
+          ...rate,
           splits: { create: splits.map((s) => ({ businessId: s.businessId, amount: s.amount })) },
         },
       });
       // Se rehace lo que el movimiento hizo en los apartados con los datos nuevos
       await revertTransactionPockets(tx, id);
-      await moveToPockets(tx, user, id, data, splits, rate);
+      await moveToPockets(tx, user, id, data, splits, rate.rateVesPerUsd);
+      if (existing.receivableId) await recomputeReceivableStatus(existing.receivableId, tx);
+      if (existing.debtId) await recomputeDebtStatus(existing.debtId, tx);
     });
   } catch (e) {
+    if (e instanceof EditError) return fail(e.message);
     return pocketFailure(e);
   }
-  if (existing.receivableId) await recomputeReceivableStatus(existing.receivableId);
-  if (existing.debtId) await recomputeDebtStatus(existing.debtId);
   revalidatePath("/", "layout");
   redirect("/movimientos");
 }
 
+class EditError extends Error {}
+
+/** Movimientos que solo se borran desde su préstamo (borrarlos sueltos dejaría la deuda descuadrada). */
+const LOAN_ORIGIN_TYPES = ["LOAN_OUT", "LOAN_IN"];
+
 export async function deleteTransaction(id: string) {
   const user = await requireUser();
   const tx = await prisma.transaction.findFirst({ where: { id, userId: user.id } });
-  if (!tx) return;
-  // Lo que el movimiento metió o sacó de los apartados se deshace con él
-  await prisma.pocketMovement.deleteMany({ where: { sourceTransactionId: tx.id } });
-  if (tx.transferGroupId) {
-    await prisma.transaction.deleteMany({ where: { userId: user.id, transferGroupId: tx.transferGroupId } });
-  } else {
-    await prisma.transaction.delete({ where: { id } });
-  }
-  if (tx.receivableId) await recomputeReceivableStatus(tx.receivableId);
-  if (tx.debtId) await recomputeDebtStatus(tx.debtId);
+  if (!tx || LOAN_ORIGIN_TYPES.includes(tx.type)) return;
+  // Lo que el movimiento metió o sacó de los apartados se borra con él (en cascada)
+  await prisma.$transaction(async (db) => {
+    if (tx.transferGroupId && tx.type.startsWith("TRANSFER")) {
+      // Las dos partes de la transferencia y su comisión (la comisión sola se puede borrar aparte)
+      await db.transaction.deleteMany({ where: { userId: user.id, transferGroupId: tx.transferGroupId } });
+    } else {
+      await db.transaction.delete({ where: { id } });
+    }
+    if (tx.receivableId) await recomputeReceivableStatus(tx.receivableId, db);
+    if (tx.debtId) await recomputeDebtStatus(tx.debtId, db);
+  });
   revalidatePath("/", "layout");
 }

@@ -23,6 +23,9 @@ async function parseIncome(userId: string, formData: FormData) {
       amount: d.amount,
       currencyCode: d.currencyCode,
       dayOfMonth: d.dayOfMonth,
+      // Los mensuales vencen todos los meses
+      intervalMonths: d.intervalMonths,
+      startMonth: d.intervalMonths === 1 ? null : (d.startMonth ?? null),
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,

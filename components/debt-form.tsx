@@ -65,7 +65,7 @@ export function DebtForm({
           </Field>
           <input type="hidden" name="currencyCode" value={loanCurrency ?? "USD"} />
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`Monto (${loanCurrency ?? ""})`}>
+            <Field label={`Monto (${loanCurrency ?? ""})`} hint={loanCurrency === "VES" ? "Se guarda en USD a la tasa del día" : undefined}>
               <Input name="amount" required inputMode="decimal" placeholder="0,00" />
             </Field>
             <Field label="Fecha del préstamo">
@@ -81,7 +81,7 @@ export function DebtForm({
           <Field label="Monto">
             <Input name="amount" required inputMode="decimal" placeholder="0,00" />
           </Field>
-          <Field label="Divisa">
+          <Field label="Divisa" hint="En VES se guarda en USD a la tasa del día">
             <Select name="currencyCode" defaultValue="USD">
               <option value="USD">USD</option>
               <option value="VES">VES</option>

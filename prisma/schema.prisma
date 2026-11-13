@@ -238,6 +238,9 @@ model RecurringIncome {
   amount       Decimal  @db.Decimal(20, 8)
   currencyCode String
   dayOfMonth   Int
+  // Cada cuántos meses se cobra (1 = mensual, 3, 6, 12) y un mes (yyyy-mm) en que toca; null = todos
+  intervalMonths Int     @default(1)
+  startMonth     String?
   walletId     String?
   categoryId   String?
   businessId   String?
@@ -391,7 +394,7 @@ model PocketMovement {
   createdAt           DateTime @default(now())
 
   pocket            Pocket       @relation(fields: [pocketId], references: [id], onDelete: Cascade)
-  sourceTransaction Transaction? @relation(fields: [sourceTransactionId], references: [id], onDelete: SetNull)
+  sourceTransaction Transaction? @relation(fields: [sourceTransactionId], references: [id], onDelete: Cascade)
 
   @@index([pocketId])
   @@index([sourceTransactionId])
