@@ -41,6 +41,40 @@ export function PageHeader({
   );
 }
 
+/** Selector entre páginas hermanas (p. ej. Gastos fijos | Ingresos fijos): una sola sección del menú. */
+export function SectionSwitch({ items, current }: { items: { href: string; label: string }[]; current: string }) {
+  return (
+    <nav aria-label="Ver" className="mb-4 grid max-w-md grid-cols-2 gap-1 rounded-xl bg-background p-1 sm:mb-5">
+      {items.map((item) => {
+        const active = item.href === current;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex min-h-10 items-center justify-center rounded-lg px-3 text-sm font-medium transition sm:min-h-9",
+              active ? "bg-surface shadow-sm" : "text-muted hover:text-foreground",
+            )}
+          >
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+export const FIXED_SECTIONS = [
+  { href: "/gastos-fijos", label: "Gastos fijos" },
+  { href: "/ingresos-fijos", label: "Ingresos fijos" },
+];
+
+export const PENDING_SECTIONS = [
+  { href: "/por-cobrar", label: "Me deben" },
+  { href: "/deudas", label: "Debo" },
+];
+
 export function SectionTitle({ children, className }: { children: ReactNode; className?: string }) {
   return <h2 className={cn("mb-3 text-xs font-semibold uppercase tracking-wider text-muted", className)}>{children}</h2>;
 }

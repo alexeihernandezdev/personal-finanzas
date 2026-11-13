@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { DebtForm } from "@/components/debt-form";
 import { PocketPicker } from "@/components/pocket-picker";
-import { Amount, Badge, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
+import { Amount, Badge, Card, EmptyState, Input, PageHeader, PENDING_SECTIONS, SectionSwitch, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getDebts, getPocketChoices, getWalletsWithBalance } from "@/lib/queries";
@@ -49,6 +49,7 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
 
   return (
     <>
+      <SectionSwitch items={PENDING_SECTIONS} current="/deudas" />
       <PageHeader title="Deudas" description="Lo que debes pagar y préstamos que te hicieron" />
       <div className="mb-6 grid grid-cols-2 gap-3">
         <Card>

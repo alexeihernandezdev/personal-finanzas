@@ -5,7 +5,7 @@ import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-for
 import { PocketPicker } from "@/components/pocket-picker";
 import { ReceivableForm } from "@/components/receivable-form";
 import { ReceivablePaymentFields } from "@/components/receivable-payment-fields";
-import { Amount, Badge, Card, Checkbox, EmptyState, Input, PageHeader } from "@/components/ui";
+import { Amount, Badge, Card, Checkbox, EmptyState, Input, PageHeader, PENDING_SECTIONS, SectionSwitch } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getPocketChoices, getReceivables, getWalletsWithBalance } from "@/lib/queries";
@@ -51,6 +51,7 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
 
   return (
     <>
+      <SectionSwitch items={PENDING_SECTIONS} current="/por-cobrar" />
       <PageHeader title="Por cobrar" description="Dinero que te van a pagar y préstamos que hiciste" />
       <div className="mb-6 grid grid-cols-2 gap-3">
         <Card>

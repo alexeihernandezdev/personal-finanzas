@@ -2,15 +2,21 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
 import { TransactionForm } from "@/components/transaction-form";
-import { buttonClass, Card, EmptyState, PageHeader } from "@/components/ui";
+import { TransferForm } from "@/components/transfer-form";
+import { buttonClass, Card, EmptyState, PageHeader, SectionSwitch } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { getCurrentRates, pickRate, serializeRates } from "@/lib/rates";
 import { getBusinesses, getCategories, getPocketChoices, getWalletsWithBalance } from "@/lib/queries";
 import { todayISO } from "@/lib/utils";
 import { createTransaction } from "../actions";
+import { createTransfer } from "../transfer-actions";
+
+const MOVEMENT = "/movimientos/nuevo";
+const TRANSFER = "/movimientos/nuevo?tipo=transferencia";
 
 async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimientos/nuevo">) {
-  const { cuenta } = await searchParams;
+  const { cuenta, tipo } = await searchParams;
+  const isTransfer = tipo === "transferencia";
   const user = await requireUser();
   const rates = await getCurrentRates();
   const [wallets, categories, businesses, pockets] = await Promise.all([
@@ -22,7 +28,17 @@ async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimien
 
   return (
     <>
-      <PageHeader title="Nuevo movimiento" description="Registra un ingreso o un gasto" />
+      <SectionSwitch
+        items={[
+          { href: MOVEMENT, label: "Ingreso o gasto" },
+          { href: TRANSFER, label: "Transferencia" },
+        ]}
+        current={isTransfer ? TRANSFER : MOVEMENT}
+      />
+      <PageHeader
+        title={isTransfer ? "Nueva transferencia" : "Nuevo movimiento"}
+        description={isTransfer ? "Mueve dinero entre tus cuentas, incluso entre divisas" : "Registra un ingreso o un gasto"}
+      />
       {wallets.length === 0 ? (
         <EmptyState>
           Primero crea una cuenta.{" "}
@@ -30,6 +46,18 @@ async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimien
             Ir a cuentas
           </Link>
         </EmptyState>
+      ) : isTransfer ? (
+        <Card className="max-w-2xl">
+          {wallets.length < 2 ? (
+            <EmptyState>Necesitas al menos dos cuentas para transferir.</EmptyState>
+          ) : (
+            <TransferForm
+              action={createTransfer}
+              wallets={wallets.map((w) => ({ id: w.id, name: w.name, currencyCode: w.currencyCode, balance: w.balance.toString() }))}
+              today={todayISO()}
+            />
+          )}
+        </Card>
       ) : (
         <Card className="max-w-2xl">
           <TransactionForm

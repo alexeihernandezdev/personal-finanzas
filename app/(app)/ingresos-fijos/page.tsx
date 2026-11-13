@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { CURRENCIES } from "@/components/wallet-fields";
-import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
+import { Amount, Badge, Card, EmptyState, Field, FIXED_SECTIONS, Input, PageHeader, SectionSwitch, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getCategories, getRecurringIncome, getWalletsWithBalance } from "@/lib/queries";
@@ -35,6 +35,7 @@ async function IngresosFijosPageContent() {
 
   return (
     <>
+      <SectionSwitch items={FIXED_SECTIONS} current="/ingresos-fijos" />
       <PageHeader title="Ingresos fijos" description="Lo que te entra cada mes (sueldo, alquileres, clientes fijos…)" />
       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Card>

@@ -6,7 +6,7 @@ import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-for
 import { MonthNav, parseMonthParam } from "@/components/month-nav";
 import { PocketPicker } from "@/components/pocket-picker";
 import { CURRENCIES } from "@/components/wallet-fields";
-import { Amount, Badge, buttonClass, Card, Checkbox, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
+import { Amount, Badge, buttonClass, Card, Checkbox, EmptyState, Field, FIXED_SECTIONS, Input, PageHeader, SectionSwitch, Select } from "@/components/ui";
 import { FREQUENCIES, nextDueMonth } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { prisma } from "@/lib/db";
@@ -65,6 +65,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
 
   return (
     <>
+      <SectionSwitch items={FIXED_SECTIONS} current="/gastos-fijos" />
       <PageHeader
         title="Gastos fijos"
         description="Pagos que se repiten cada mes, trimestre, semestre o año"

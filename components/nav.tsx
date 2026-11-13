@@ -4,8 +4,6 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  ArrowLeftRight,
-  Banknote,
   BarChart3,
   CalendarClock,
   HandCoins,
@@ -14,7 +12,6 @@ import {
   ListOrdered,
   PiggyBank,
   Plus,
-  Receipt,
   Settings,
   Store,
   Tags,
@@ -25,35 +22,28 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type NavItem = { href: string; label: string; icon: LucideIcon };
+/** `also`: otras rutas de la misma sección (p. ej. Fijos = gastos e ingresos fijos). */
+type NavItem = { href: string; label: string; icon: LucideIcon; also?: string[] };
 
 export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
-    title: "Día a día",
+    title: "Tu dinero",
     items: [
       { href: "/", label: "Inicio", icon: LayoutDashboard },
-      { href: "/movimientos", label: "Movimientos", icon: ListOrdered },
-      { href: "/transferencias", label: "Transferencias", icon: ArrowLeftRight },
+      { href: "/movimientos", label: "Movimientos", icon: ListOrdered, also: ["/transferencias"] },
       { href: "/cuentas", label: "Cuentas", icon: Wallet },
-      { href: "/apartados", label: "Apartados", icon: PiggyBank },
+      { href: "/apartados", label: "Apartados", icon: PiggyBank, also: ["/presupuesto"] },
+      { href: "/gastos-fijos", label: "Fijos", icon: CalendarClock, also: ["/ingresos-fijos"] },
     ],
   },
   {
-    title: "Planificación",
+    title: "Más",
     items: [
-      { href: "/ingresos-fijos", label: "Ingresos fijos", icon: Banknote },
-      { href: "/gastos-fijos", label: "Gastos fijos", icon: CalendarClock },
-      { href: "/por-cobrar", label: "Por cobrar", icon: HandCoins },
-      { href: "/deudas", label: "Deudas", icon: Receipt },
-    ],
-  },
-  {
-    title: "Análisis y ajustes",
-    items: [
+      { href: "/por-cobrar", label: "Pendientes", icon: HandCoins, also: ["/deudas"] },
       { href: "/reportes", label: "Reportes", icon: BarChart3 },
-      { href: "/tasas", label: "Tasas", icon: TrendingUp },
-      { href: "/categorias", label: "Categorías", icon: Tags },
       { href: "/negocios", label: "Negocios", icon: Store },
+      { href: "/categorias", label: "Categorías", icon: Tags },
+      { href: "/tasas", label: "Tasas", icon: TrendingUp },
       { href: "/ajustes", label: "Ajustes", icon: Settings },
     ],
   },
@@ -61,8 +51,10 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 
 export const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
-const isActive = (pathname: string | null, href: string) =>
-  pathname !== null && (href === "/" ? pathname === "/" : pathname.startsWith(href));
+const matches = (pathname: string, href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+
+const isActive = (pathname: string | null, href: string, also: string[] = []) =>
+  pathname !== null && [href, ...also].some((h) => matches(pathname, h));
 
 // usePathname() es dato de la URL: con Cache Components necesita su propio Suspense
 function WithPathname({ children }: { children: (pathname: string | null) => ReactNode }) {
@@ -87,8 +79,8 @@ export function NavLinks() {
             <div key={group.title}>
               <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted/80">{group.title}</p>
               <div className="flex flex-col gap-0.5">
-                {group.items.map(({ href, label, icon: Icon }) => {
-                  const active = isActive(pathname, href);
+                {group.items.map(({ href, label, icon: Icon, also }) => {
+                  const active = isActive(pathname, href, also);
                   return (
                     <Link
                       key={href}
@@ -235,8 +227,8 @@ function MoreSheet({
               <div key={group.title}>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">{group.title}</p>
                 <div className="grid grid-cols-3 gap-2">
-                  {group.items.map(({ href, label, icon: Icon }) => {
-                    const active = isActive(pathname, href);
+                  {group.items.map(({ href, label, icon: Icon, also }) => {
+                    const active = isActive(pathname, href, also);
                     return (
                       <Link
                         key={href}

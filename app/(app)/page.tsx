@@ -72,7 +72,7 @@ async function DashboardPageContent() {
         description={`Resumen de ${formatMonth(month)}`}
         actions={
           <>
-            <Link href="/transferencias" className={buttonClass("secondary")}>
+            <Link href="/movimientos/nuevo?tipo=transferencia" className={buttonClass("secondary")}>
               <ArrowLeftRight className="size-4" />
               Transferir
             </Link>
