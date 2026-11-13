@@ -8,12 +8,14 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import type { RateSource } from "@/lib/generated/prisma/client";
 import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
 import { SUGGESTED_POCKETS } from "@/lib/budget";
+import { ensureFixedReservePocket } from "@/lib/fixed-reserve";
+import { OwnerPayError, payOwnerSalary, undoOwnerSalary } from "@/lib/owner-pay";
 import { dec, Decimal, formatMoney, type DecimalLike } from "@/lib/money";
 import { allocateToPocket, ensureMainPocket, withdrawFromPocket } from "@/lib/pockets";
 import { getMoneySummary, getPockets } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { parseISODate, todayISO } from "@/lib/utils";
-import { fixedBufferSchema, ownerPaySchema, pocketMovementSchema, pocketSchema, pocketTransferSchema } from "@/lib/validators";
+import { fixedBufferSchema, ownerPaymentSchema, ownerPaySchema, pocketMovementSchema, pocketSchema, pocketTransferSchema } from "@/lib/validators";
 
 /** Lo apartado sale del dinero libre de todas las cuentas; avisa si no alcanza. */
 async function checkAvailable(user: { id: string; preferredRateSource: RateSource }, amount: DecimalLike, currency: string) {
@@ -23,27 +25,21 @@ async function checkAvailable(user: { id: string; preferredRateSource: RateSourc
   return null;
 }
 
-/**
- * Lo que entra a la Caja de un dueño se reparte entre sus apartados con % (y el sueldo si es un
- * negocio): entre todos no pueden pasar del 100%.
- */
+/** Lo que entra a la Caja de un dueño se reparte entre sus apartados con %: entre todos no pueden pasar del 100%. */
 async function exceedsTotal(userId: string, businessId: string | null, percent: string | null, exceptPocketId?: string) {
   if (!percent) return null;
-  const [others, business] = await Promise.all([
-    prisma.pocket.aggregate({
-      where: {
-        userId,
-        businessId,
-        archived: false,
-        isMain: false,
-        isFixedReserve: false,
-        ...(exceptPocketId ? { id: { not: exceptPocketId } } : {}),
-      },
-      _sum: { percent: true },
-    }),
-    businessId ? prisma.business.findFirst({ where: { id: businessId, userId }, select: { ownerPayPercent: true } }) : null,
-  ]);
-  const used = dec(others._sum.percent).add(dec(business?.ownerPayPercent));
+  const others = await prisma.pocket.aggregate({
+    where: {
+      userId,
+      businessId,
+      archived: false,
+      isMain: false,
+      isFixedReserve: false,
+      ...(exceptPocketId ? { id: { not: exceptPocketId } } : {}),
+    },
+    _sum: { percent: true },
+  });
+  const used = dec(others._sum.percent);
   if (used.add(percent).lte(100)) return null;
   return fail(`Los apartados de este dueño ya suman ${used.toString()}%: te queda ${Decimal.max(0, new Decimal(100).sub(used)).toString()}%`);
 }
@@ -293,27 +289,55 @@ export async function createSuggestedPockets(businessId: string | null) {
   revalidatePath("/", "layout");
 }
 
-/** Sueldo del dueño de un negocio: % de cada ingreso del negocio que pasa a la Caja Personal. */
+/**
+ * Sueldo del dueño de un negocio: un monto fijo al mes (se reserva como un gasto fijo del negocio y
+ * cuenta como ingreso fijo Personal) o un % de la ganancia de cada mes.
+ */
 export async function updateOwnerPay(businessId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
   const parsed = ownerPaySchema.safeParse(formObject(formData));
   if (!parsed.success) return zodError(parsed.error);
   const business = await prisma.business.findFirst({ where: { id: businessId, userId: user.id } });
   if (!business) return fail("Negocio no encontrado");
-  const { percent } = parsed.data;
-  if (percent) {
-    const others = await prisma.pocket.aggregate({
-      where: { userId: user.id, businessId, archived: false, isMain: false, isFixedReserve: false },
-      _sum: { percent: true },
-    });
-    const used = dec(others._sum.percent);
-    if (used.add(percent).gt(100)) {
-      return fail(`Los apartados de este negocio ya suman ${used.toString()}%: te queda ${Decimal.max(0, new Decimal(100).sub(used)).toString()}%`);
-    }
-  }
-  await prisma.business.update({ where: { id: businessId }, data: { ownerPayPercent: percent } });
+  const d = parsed.data;
+  await prisma.business.update({
+    where: { id: businessId },
+    data: {
+      ownerPayMode: d.mode,
+      ownerPayPercent: d.mode === "PROFIT_PERCENT" ? d.percent : null,
+      ownerPayAmount: d.mode === "FIXED" ? d.amount : null,
+      ownerPayCurrency: d.mode === "FIXED" ? (d.currencyCode ?? user.displayCurrency) : null,
+    },
+  });
+  // El sueldo fijo se va reservando en el apartado "Gastos fijos" del negocio
+  if (d.mode === "FIXED") await ensureFixedReservePocket(prisma, user.id, businessId, user.displayCurrency);
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/** Te pagas el sueldo de un mes: pasa de los apartados del negocio a tu Caja Personal (ver `payOwnerSalary`). */
+export async function payOwner(businessId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = ownerPaymentSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const { month, amount } = parsed.data;
+  const business = await prisma.business.findFirst({ where: { id: businessId, userId: user.id } });
+  if (!business) return fail("Negocio no encontrado");
+  try {
+    await payOwnerSalary(user, business, month, amount);
+  } catch (e) {
+    if (e instanceof OwnerPayError) return fail(e.message);
+    throw e;
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: `Te pagaste ${formatMoney(amount, user.displayCurrency)} de ${business.name}` };
+}
+
+/** Deshace el pago de un sueldo: el dinero vuelve a los apartados del negocio. */
+export async function undoOwnerPay(id: string) {
+  const user = await requireUser();
+  await undoOwnerSalary(user.id, id);
+  revalidatePath("/", "layout");
 }
 
 /** Colchón sobre los gastos fijos (% de su total). */

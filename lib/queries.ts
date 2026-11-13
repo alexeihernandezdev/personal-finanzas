@@ -93,14 +93,11 @@ export type PocketWithBalance = Awaited<ReturnType<typeof getPockets>>[number];
  * y, si son Cajas, cómo se reparte lo que les entra (con `rate` se calcula el % de los gastos fijos).
  */
 export async function getPocketChoices(userId: string, rate?: DecimalLike | null) {
-  const [pockets, businesses] = await Promise.all([
-    prisma.pocket.findMany({
-      where: { userId, archived: false },
-      include: { business: { select: { name: true } } },
-      orderBy: [{ isMain: "desc" }, { createdAt: "asc" }],
-    }),
-    prisma.business.findMany({ where: { userId }, select: { id: true, ownerPayPercent: true } }),
-  ]);
+  const pockets = await prisma.pocket.findMany({
+    where: { userId, archived: false },
+    include: { business: { select: { name: true } } },
+    orderBy: [{ isMain: "desc" }, { createdAt: "asc" }],
+  });
   const cajas = pockets.filter((p) => p.isMain);
   const plans = new Map(
     await Promise.all(
@@ -110,7 +107,7 @@ export async function getPocketChoices(userId: string, rate?: DecimalLike | null
   const rulesOf = (caja: (typeof pockets)[number]) => {
     const plan = plans.get(caja.id);
     const rules: { name: string; percent: string | null; target: string }[] = [];
-    if (plan?.fixed.gt(0)) {
+    if (plan?.fixedWithBuffer.gt(0)) {
       rules.push({
         name: "Gastos fijos",
         percent: plan.income.gt(0) ? Decimal.min(100, plan.fixedWithBuffer.div(plan.income).mul(100)).toDecimalPlaces(2).toString() : null,
@@ -122,8 +119,6 @@ export async function getPocketChoices(userId: string, rate?: DecimalLike | null
         rules.push({ name: p.name, percent: p.percent.toString(), target: p.name });
       }
     }
-    const pay = businesses.find((b) => b.id === caja.businessId)?.ownerPayPercent;
-    if (pay?.gt(0)) rules.push({ name: "Sueldo", percent: pay.toString(), target: "Caja Personal" });
     return rules;
   };
   return pockets
@@ -325,9 +320,10 @@ export function getRecurringIncome(userId: string) {
 }
 
 /**
- * Plan mensual de un dueño (Personal o un negocio) en la divisa del usuario: sus ingresos fijos activos,
- * sus gastos fijos activos (más el colchón), sus apartados con porcentaje y, si es un negocio, el sueldo
- * que pasa a Personal. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
+ * Plan mensual de un dueño (Personal o un negocio) en la divisa del usuario: sus ingresos fijos activos
+ * (en Personal, con los sueldos fijos de los negocios), sus gastos fijos activos (más el colchón y, si es
+ * un negocio, el sueldo fijo) y sus apartados con porcentaje. Convierte con la tasa actual; los montos
+ * sin tasa disponible se omiten.
  */
 export async function getBudgetOverview(
   userId: string,
@@ -335,19 +331,74 @@ export async function getBudgetOverview(
   rate: Decimal | null,
   businessId: string | null = null,
 ) {
-  const [plan, pockets, business] = await Promise.all([
+  const [plan, pockets] = await Promise.all([
     getMonthlyPlan(prisma, userId, businessId, displayCurrency, rate),
     prisma.pocket.findMany({
       where: { userId, businessId, archived: false, isMain: false, isFixedReserve: false, percent: { gt: 0 } },
       orderBy: { createdAt: "asc" },
     }),
-    businessId ? prisma.business.findFirst({ where: { id: businessId, userId }, select: { ownerPayPercent: true } }) : null,
   ]);
   const lines = pockets.map((p) => ({ id: p.id, name: p.name, color: p.color, percent: p.percent ?? 0 }));
-  if (business?.ownerPayPercent?.gt(0)) {
-    lines.push({ id: "owner-pay", name: "Tu sueldo → Personal", color: "#0ea5e9", percent: business.ownerPayPercent });
+  return {
+    ...computeBudget(plan.income, plan.fixed, lines, plan.bufferPercent, plan.ownerSalary),
+    /** Sueldos fijos de los negocios incluidos en el ingreso fijo (solo Personal) */
+    salaries: plan.salaries,
+  };
+}
+
+/**
+ * Ganancia de un negocio en un mes (sus ingresos menos sus gastos, sin transferencias ni préstamos),
+ * en `currency`. Cada movimiento se convierte con su tasa guardada o, si no la tiene, con `fallback`.
+ */
+export async function getBusinessProfit(userId: string, businessId: string, month: string, currency: string, fallback: DecimalLike | null) {
+  const { start, end } = monthRange(month);
+  const txs = await prisma.transaction.findMany({
+    where: { userId, businessId, type: { in: ["INCOME", "EXPENSE"] }, date: { gte: start, lt: end } },
+    select: { type: true, amount: true, rateVesPerUsd: true, wallet: { select: { currencyCode: true } } },
+  });
+  let income = new Decimal(0);
+  let expense = new Decimal(0);
+  for (const t of txs) {
+    let value: Decimal;
+    try {
+      value = convert(t.amount, t.wallet.currencyCode, currency, t.rateVesPerUsd ?? fallback);
+    } catch {
+      continue;
+    }
+    if (t.type === "INCOME") income = income.add(value);
+    else expense = expense.add(value);
   }
-  return computeBudget(plan.income, plan.fixed, lines, plan.bufferPercent);
+  return { income, expense, profit: income.sub(expense) };
+}
+
+/**
+ * Sueldo de un negocio en los meses indicados: lo que te toca (monto fijo o % de la ganancia), la
+ * ganancia del mes y lo que ya te pagaste, en `currency`.
+ */
+export async function getOwnerPayMonths(
+  userId: string,
+  business: { id: string; ownerPayMode: string; ownerPayPercent: Prisma.Decimal | null; ownerPayAmount: Prisma.Decimal | null; ownerPayCurrency: string | null },
+  months: string[],
+  currency: string,
+  rate: DecimalLike | null,
+) {
+  const paid = await prisma.ownerPay.findMany({ where: { userId, businessId: business.id, month: { in: months } } });
+  return Promise.all(
+    months.map(async (month) => {
+      const result = await getBusinessProfit(userId, business.id, month, currency, rate);
+      let due = new Decimal(0);
+      if (business.ownerPayMode === "FIXED" && business.ownerPayAmount) {
+        try {
+          due = convert(business.ownerPayAmount, business.ownerPayCurrency ?? currency, currency, rate);
+        } catch {
+          // Sin tasa para convertir
+        }
+      } else if (business.ownerPayMode === "PROFIT_PERCENT" && business.ownerPayPercent) {
+        due = Decimal.max(0, result.profit).mul(business.ownerPayPercent).div(100);
+      }
+      return { month, ...result, due: due.toDecimalPlaces(2, Decimal.ROUND_DOWN), payment: paid.find((p) => p.month === month) ?? null };
+    }),
+  );
 }
 
 /** Cuentas por cobrar y préstamos con el monto cobrado hasta ahora (en la divisa del registro). */

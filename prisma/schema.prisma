@@ -34,6 +34,7 @@ model User {
   receivables      Receivable[]
   debts            Debt[]
   pockets          Pocket[]
+  ownerPays        OwnerPay[]
 }
 
 // ─── Catálogos ───────────────────────────────────────────────────────────────
@@ -102,8 +103,12 @@ model Business {
   name     String
   color    String  @default("#6366f1")
   archived Boolean @default(false)
-  // Tu sueldo: % de cada ingreso del negocio que pasa a la Caja Personal (y se reparte allí)
-  ownerPayPercent Decimal? @db.Decimal(5, 2)
+  // Tu sueldo: un monto fijo al mes o un % de la ganancia del mes (ingresos − gastos)
+  ownerPayMode    OwnerPayMode @default(NONE)
+  ownerPayPercent Decimal?     @db.Decimal(5, 2)
+  // Sueldo fijo, en `ownerPayCurrency`: cuenta como gasto fijo del negocio e ingreso fijo Personal
+  ownerPayAmount   Decimal? @db.Decimal(20, 8)
+  ownerPayCurrency String?
 
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions    Transaction[]
@@ -112,8 +117,33 @@ model Business {
   receivables     Receivable[]
   debts           Debt[]
   pockets         Pocket[]
+  ownerPays       OwnerPay[]
 
   @@unique([userId, name])
+}
+
+enum OwnerPayMode {
+  NONE
+  FIXED // monto fijo al mes
+  PROFIT_PERCENT // % de la ganancia del mes
+}
+
+// Sueldo de un mes que te pagaste de un negocio: un traspaso de sus apartados a la Caja Personal
+model OwnerPay {
+  id           String   @id @default(cuid())
+  userId       String
+  businessId   String
+  month        String // yyyy-mm
+  amount       Decimal  @db.Decimal(20, 8)
+  currencyCode String
+  // Movimientos de apartados del traspaso
+  groupId      String
+  createdAt    DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, month])
 }
 
 // ─── Movimientos ─────────────────────────────────────────────────────────────

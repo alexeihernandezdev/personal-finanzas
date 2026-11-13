@@ -37,8 +37,9 @@ export async function ensureFixedReservePocket(db: Db, userId: string, businessI
 
 /**
  * Ingreso fijo y gastos fijos de un dueño al mes, en `currency`. Los que no son mensuales cuentan su
- * parte de cada mes (anual / 12…). `fixedWithBuffer` incluye el colchón. Los montos sin tasa para
- * convertir se omiten.
+ * parte de cada mes (anual / 12…). Los sueldos fijos de los negocios son un gasto fijo del negocio
+ * (`ownerSalary`, sin colchón) y un ingreso fijo de Personal (`salaries`). `fixedWithBuffer`: gastos
+ * fijos con colchón más el sueldo. Los montos sin tasa para convertir se omiten.
  */
 export async function getMonthlyPlan(db: Db, userId: string, businessId: string | null, currency: string, rate: DecimalLike | null | undefined) {
   // En secuencia: `db` puede ser una transacción, que no admite consultas en paralelo
@@ -46,21 +47,35 @@ export async function getMonthlyPlan(db: Db, userId: string, businessId: string 
   const incomes = await db.recurringIncome.findMany({ where: { userId, businessId, active: true }, select });
   const expenses = await db.recurringExpense.findMany({ where: { userId, businessId, active: true }, select });
   const user = await db.user.findUnique({ where: { id: userId }, select: { fixedBufferPercent: true } });
+  const salaried = await db.business.findMany({
+    where: { userId, ownerPayMode: "FIXED", ...(businessId ? { id: businessId } : { archived: false }) },
+    select: { name: true, ownerPayAmount: true, ownerPayCurrency: true },
+  });
+  const toCurrency = (amount: DecimalLike, from: string) => {
+    try {
+      return convert(amount, from, currency, rate);
+    } catch {
+      return new Decimal(0);
+    }
+  };
   const sum = (list: { amount: Prisma.Decimal; currencyCode: string; intervalMonths: number }[]) =>
-    list.reduce((acc, i) => {
-      try {
-        return acc.add(convert(i.amount, i.currencyCode, currency, rate).div(Math.max(1, i.intervalMonths)));
-      } catch {
-        return acc;
-      }
-    }, new Decimal(0));
+    list.reduce((acc, i) => acc.add(toCurrency(i.amount, i.currencyCode).div(Math.max(1, i.intervalMonths))), new Decimal(0));
+  const salaries = salaried
+    .filter((b) => b.ownerPayAmount?.gt(0))
+    .map((b) => ({ name: b.name, amount: toCurrency(b.ownerPayAmount!, b.ownerPayCurrency ?? currency) }));
+  const salaryTotal = salaries.reduce((acc, s) => acc.add(s.amount), new Decimal(0));
   const fixed = sum(expenses);
   const bufferPercent = dec(user?.fixedBufferPercent);
+  const ownerSalary = businessId ? salaryTotal : new Decimal(0);
   return {
-    income: sum(incomes),
+    income: sum(incomes).add(businessId ? 0 : salaryTotal),
     fixed,
     bufferPercent,
-    fixedWithBuffer: fixed.mul(new Decimal(100).add(bufferPercent)).div(100),
+    /** Sueldo fijo que el negocio le paga a su dueño */
+    ownerSalary,
+    /** Sueldos fijos de los negocios que cuentan como ingreso fijo de Personal */
+    salaries: businessId ? [] : salaries,
+    fixedWithBuffer: fixed.mul(new Decimal(100).add(bufferPercent)).div(100).add(ownerSalary),
   };
 }
 

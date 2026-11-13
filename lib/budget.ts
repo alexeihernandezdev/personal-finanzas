@@ -10,21 +10,25 @@ export const SUGGESTED_POCKETS = [
 ];
 
 /**
- * Plan del mes de un dueño: los gastos fijos se llevan su porcentaje real del ingreso fijo más un
- * colchón (`bufferPercent` % de los gastos fijos), cada apartado su porcentaje y lo que sobra queda
- * libre en la Caja. Todos los montos en la misma divisa.
+ * Plan del mes de un dueño: los gastos fijos (y el sueldo fijo si es un negocio) se llevan su
+ * porcentaje real del ingreso fijo más un colchón (`bufferPercent` % de los gastos fijos), cada
+ * apartado su porcentaje y lo que sobra queda libre en la Caja. Todos los montos en la misma divisa.
  */
 export function computeBudget(
   income: DecimalLike,
   fixedExpenses: DecimalLike,
   pockets: BudgetPocketInput[],
   bufferPercent: DecimalLike = 0,
+  /** Sueldo fijo del dueño de un negocio: cuenta como gasto fijo, sin colchón */
+  ownerSalary: DecimalLike = 0,
 ) {
   const inc = dec(income);
-  const fixed = dec(fixedExpenses);
+  const salary = dec(ownerSalary);
+  const expenses = dec(fixedExpenses);
+  const fixed = expenses.add(salary);
   const pct = (part: Decimal) => (inc.isZero() ? new Decimal(0) : part.div(inc).mul(100));
 
-  const buffer = fixed.mul(dec(bufferPercent)).div(100);
+  const buffer = expenses.mul(dec(bufferPercent)).div(100);
   const items = pockets.map((b) => {
     const percent = dec(b.percent);
     return { ...b, percent, amount: inc.mul(percent).div(100) };
@@ -35,8 +39,10 @@ export function computeBudget(
 
   return {
     income: inc,
+    /** Gastos fijos más el sueldo fijo del dueño */
     fixed,
     fixedPercent: pct(fixed),
+    ownerSalary: salary,
     /** Colchón: % configurado sobre los gastos fijos, su monto y lo que representa de los ingresos */
     bufferPercent: dec(bufferPercent),
     buffer,

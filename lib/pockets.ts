@@ -119,8 +119,8 @@ export async function withdrawFromPocket(
 
 /**
  * Reparte lo que entró a una Caja según el plan de su dueño (ver `planDistribution`): su parte de
- * gastos fijos va al apartado "Gastos fijos", cada apartado con porcentaje se lleva el suyo y, si es
- * un negocio con sueldo, ese % pasa a la Caja Personal (que lo vuelve a repartir). Lo libre se queda en la Caja.
+ * gastos fijos (con el sueldo fijo si es un negocio) va al apartado "Gastos fijos" y cada apartado con
+ * porcentaje se lleva el suyo. Lo libre se queda en la Caja.
  */
 async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx: Ctx) {
   const depth = ctx.depth ?? 0;
@@ -134,10 +134,7 @@ async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx:
     select: { ...pocketSelect, percent: true },
     orderBy: { createdAt: "asc" },
   });
-  const business = caja.businessId
-    ? await tx.business.findUnique({ where: { id: caja.businessId }, select: { ownerPayPercent: true } })
-    : null;
-  const fixedPocket = plan.fixed.gt(0)
+  const fixedPocket = plan.fixedWithBuffer.gt(0)
     ? await ensureFixedReservePocket(tx, ctx.userId, caja.businessId, caja.currencyCode)
     : null;
   // Sin ingreso fijo, los gastos fijos se llevan lo que les falta para el mes
@@ -150,18 +147,12 @@ async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx:
       // Sin tasa: no se reservan los gastos fijos
     }
   }
-  const ownerPay = dec(business?.ownerPayPercent);
-  const targets: { label: string; pocket: PocketRef; distribute: boolean }[] = pockets.map((p) => ({ label: p.name, pocket: p, distribute: false }));
+  const targets = pockets.map((p) => ({ label: p.name, pocket: p as PocketRef }));
   const percents: DecimalLike[] = pockets.map((p) => p.percent ?? 0);
-  if (caja.businessId && ownerPay.gt(0)) {
-    const personal = await ensureMainPocket(tx, ctx.userId, null, caja.currencyCode);
-    targets.push({ label: "Sueldo", pocket: personal, distribute: true });
-    percents.push(ownerPay);
-  }
 
   const parts = planDistribution(amount, { planIncome: plan.income, planFixed: plan.fixedWithBuffer, fixedMissing, percents });
   const moves = [
-    ...(fixedPocket ? [{ label: "Gastos fijos", pocket: fixedPocket, distribute: false, amount: parts.fixed }] : []),
+    ...(fixedPocket ? [{ label: "Gastos fijos", pocket: fixedPocket, amount: parts.fixed }] : []),
     ...targets.map((t, i) => ({ ...t, amount: parts.parts[i] })),
   ];
   for (const m of moves) {
@@ -170,7 +161,7 @@ async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx:
     if (taken.isZero()) continue;
     await allocateToPocket(tx, m.pocket, taken, caja.currencyCode, `${m.label} (de ${caja.name})`, {
       ...ctx,
-      distribute: m.distribute,
+      distribute: false,
       depth: depth + 1,
       visited,
     });

@@ -9,9 +9,9 @@ import { Amount, Badge, Card, EmptyState, Field, Input, OwnerTabs, PageHeader, S
 import { formatPercent, SUGGESTED_POCKETS, type BudgetOverview } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getBudgetOverview, getBusinesses, getMoneySummary, getPockets, type PocketWithBalance } from "@/lib/queries";
+import { currentFallbackRate, getBudgetOverview, getBusinesses, getMoneySummary, getOwnerPayMonths, getPockets, type PocketWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
-import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
+import { cn, currentMonth, formatDate, formatMonth, shiftMonth, toISODate, todayISO } from "@/lib/utils";
 import {
   createMainPocket,
   createPocket,
@@ -19,9 +19,11 @@ import {
   deletePocket,
   deletePocketMovement,
   movePocketMoney,
+  payOwner,
   toggleArchivePocket,
   togglePinPocket,
   transferPocketMoney,
+  undoOwnerPay,
   updatePocket,
 } from "./actions";
 import { EditBufferButton, EditOwnerPayButton } from "./plan-dialogs";
@@ -52,6 +54,11 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
   const tabBusinessId = currentTab.key === "personal" ? null : currentTab.key;
   const business = businesses.find((b) => b.id === tabBusinessId);
   const budget = await getBudgetOverview(user.id, cur, rate, tabBusinessId);
+  // Sueldo del negocio: el mes pasado (para cerrarlo) y el actual
+  const payMonths =
+    business && business.ownerPayMode !== "NONE"
+      ? await getOwnerPayMonths(user.id, business, [shiftMonth(currentMonth(), -1), currentMonth()], cur, rate ?? (await currentFallbackRate()))
+      : [];
 
   const tabPockets = (key: string) => pockets.filter((p) => (p.businessId ?? "personal") === key);
   const reservedIn = (key: string) =>
@@ -109,9 +116,23 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
         budget={budget}
         currency={cur}
         ownerName={currentTab.name}
-        business={business ? { id: business.id, ownerPayPercent: business.ownerPayPercent?.toString() ?? "" } : null}
+        isBusiness={Boolean(business)}
         bufferPercent={budget.bufferPercent.toString()}
       />
+      {business && (
+        <OwnerPayCard
+          business={{
+            id: business.id,
+            name: business.name,
+            mode: business.ownerPayMode,
+            percent: business.ownerPayPercent?.toString() ?? "",
+            amount: business.ownerPayAmount?.toFixed(2) ?? "",
+            currency: business.ownerPayCurrency ?? cur,
+          }}
+          months={payMonths}
+          currency={cur}
+        />
+      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex flex-col gap-6">
           {!hasCaja && (
@@ -196,26 +217,24 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
 }
 
 /**
- * Plan del mes del dueño: qué % de su ingreso fijo se llevan los gastos fijos, cada apartado y (si es
- * un negocio) tu sueldo, y cuánto queda libre en la Caja.
+ * Plan del mes del dueño: qué % de su ingreso fijo se llevan los gastos fijos (con tu sueldo fijo si
+ * es un negocio) y cada apartado, y cuánto queda libre en la Caja.
  */
 function PlanCard({
   budget,
   currency: cur,
   ownerName,
-  business,
+  isBusiness,
   bufferPercent,
 }: {
-  budget: BudgetOverview;
+  budget: Awaited<ReturnType<typeof getBudgetOverview>>;
   currency: string;
   ownerName: string;
-  business: { id: string; ownerPayPercent: string } | null;
+  isBusiness: boolean;
   bufferPercent: string;
 }) {
   const noIncome = budget.income.isZero();
   const pct = (value: Decimal) => (noIncome ? "—" : formatPercent(value));
-  const pockets = budget.pockets.filter((p) => p.id !== "owner-pay");
-  const ownerPay = budget.pockets.find((p) => p.id === "owner-pay");
 
   return (
     <Card className="mb-6">
@@ -228,6 +247,11 @@ function PlanCard({
           </Link>
         </p>
       </div>
+      {budget.salaries.length > 0 && (
+        <p className="-mt-2 mb-3 text-xs text-muted">
+          Incluye tu sueldo fijo de {budget.salaries.map((s) => `${s.name} (${formatMoney(s.amount, cur)})`).join(", ")}
+        </p>
+      )}
       <DistributionBar budget={budget} />
       {budget.overBudget && !noIncome && (
         <p className="mt-3 rounded-lg bg-negative/10 px-3 py-2 text-sm text-negative">
@@ -243,6 +267,7 @@ function PlanCard({
           detail={
             <Link href="/gastos-fijos" className="hover:underline">
               {noIncome ? "Sin ingreso fijo: se aparta lo que falta del mes" : "Su % real de tu ingreso fijo"}
+              {budget.ownerSalary.gt(0) && ` · incluye tu sueldo de ${formatMoney(budget.ownerSalary, cur)}`}
             </Link>
           }
           percent={pct(budget.fixedPercent)}
@@ -256,19 +281,9 @@ function PlanCard({
           amount={formatMoney(budget.buffer, cur)}
           action={<EditBufferButton percent={bufferPercent} />}
         />
-        {pockets.map((p) => (
+        {budget.pockets.map((p) => (
           <PlanRow key={p.id} color={p.color} name={p.name} percent={formatPercent(p.percent)} amount={formatMoney(p.amount, cur)} />
         ))}
-        {business && (
-          <PlanRow
-            color="#0ea5e9"
-            name="Tu sueldo"
-            detail={ownerPay ? "Pasa a tu Caja Personal y se reparte allí" : "Sin sueldo: el dinero se queda en el negocio"}
-            percent={ownerPay ? formatPercent(ownerPay.percent) : "—"}
-            amount={ownerPay ? formatMoney(ownerPay.amount, cur) : ""}
-            action={<EditOwnerPayButton businessId={business.id} percent={business.ownerPayPercent} />}
-          />
-        )}
         <PlanRow
           dot="border border-dashed border-muted"
           name="Libre"
@@ -287,10 +302,94 @@ function PlanCard({
         <p className="mt-1 text-pretty text-muted">
           Cada ingreso de {ownerName} entra a su Caja y se reparte al momento: Gastos fijos se lleva el % que tus gastos
           fijos (con el colchón) son de tu ingreso fijo; si no tienes ingreso fijo, lo que le falta para cubrir el mes. Cada
-          apartado se lleva su %{business && " y tu sueldo pasa a Personal"}. Lo que sobra se queda libre en la Caja. Los
+          apartado se lleva su %. Lo que sobra se queda libre en la Caja. Los
           gastos fijos anuales o trimestrales cuentan su parte de cada mes.
+          {isBusiness && " Tu sueldo fijo cuenta como un gasto fijo más del negocio."}
         </p>
       </details>
+    </Card>
+  );
+}
+
+/**
+ * Tu sueldo de un negocio: cómo te pagas (monto fijo o % de la ganancia) y, por mes, cuánto te toca y
+ * si ya te lo pagaste. Pagarlo pasa el dinero de los apartados del negocio a tu Caja Personal.
+ */
+function OwnerPayCard({
+  business,
+  months,
+  currency: cur,
+}: {
+  business: { id: string; name: string; mode: string; percent: string; amount: string; currency: string };
+  months: Awaited<ReturnType<typeof getOwnerPayMonths>>;
+  currency: string;
+}) {
+  const summary =
+    business.mode === "FIXED"
+      ? `${formatMoney(business.amount, business.currency)} al mes · se reserva en Gastos fijos con cada venta`
+      : business.mode === "PROFIT_PERCENT"
+        ? `${formatPercent(business.percent)} de la ganancia del mes (ingresos − gastos)`
+        : "Sin sueldo: el dinero se queda en el negocio";
+
+  return (
+    <Card className="mb-6">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="font-semibold">Tu sueldo</h2>
+          <p className="text-sm text-muted">{summary}</p>
+        </div>
+        <EditOwnerPayButton
+          businessId={business.id}
+          mode={business.mode}
+          percent={business.percent}
+          amount={business.amount}
+          currency={business.currency}
+        />
+      </div>
+      {months.length > 0 && (
+        <ul className="mt-3 divide-y divide-border">
+          {months.map((m) => (
+            <li key={m.month} className="flex flex-col gap-2 py-3 text-sm sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium capitalize">{formatMonth(m.month)}</p>
+                <p className="text-xs text-muted">
+                  Ganancia {formatMoney(m.profit, cur)} ({formatMoney(m.income, cur)} − {formatMoney(m.expense, cur)})
+                  {m.month === currentMonth() && " · hasta hoy"}
+                </p>
+              </div>
+              {m.payment ? (
+                <div className="flex items-center gap-2">
+                  <Badge color="success">Pagado {formatMoney(m.payment.amount, m.payment.currencyCode)}</Badge>
+                  <ConfirmButton
+                    action={undoOwnerPay.bind(null, m.payment.id)}
+                    confirm="¿Deshacer este pago? El dinero vuelve a los apartados del negocio."
+                    variant="ghost"
+                    className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs"
+                  >
+                    Deshacer
+                  </ConfirmButton>
+                </div>
+              ) : (
+                <ActionForm action={payOwner.bind(null, business.id)} className="flex items-center gap-2">
+                  <input type="hidden" name="month" value={m.month} />
+                  <div className="relative">
+                    <Input
+                      name="amount"
+                      defaultValue={m.due.gt(0) ? m.due.toFixed(2) : ""}
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      aria-label={`Sueldo de ${formatMonth(m.month)}`}
+                      className="w-32 pr-11 text-right tabular sm:h-8 sm:text-xs"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">{cur}</span>
+                  </div>
+                  <SubmitButton className="sm:h-8 sm:text-xs">Pagarme</SubmitButton>
+                </ActionForm>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

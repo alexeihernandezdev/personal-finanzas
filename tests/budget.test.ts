@@ -20,6 +20,12 @@ describe("computeBudget", () => {
     expect(b.free.toFixed(2)).toBe("360.00");
     expect(b.freePercent.toFixed(2)).toBe("36.00");
   });
+  it("el sueldo fijo de un negocio cuenta como gasto fijo, sin colchón", () => {
+    const b = computeBudget("1000", "200", [pocket("Inversión", "10")], "10", "300");
+    expect(b.fixed.toFixed(2)).toBe("500.00");
+    expect(b.buffer.toFixed(2)).toBe("20.00");
+    expect(b.free.toFixed(2)).toBe("380.00");
+  });
   it("detecta cuando se asigna más de lo que entra", () => {
     const b = computeBudget("1000", "800", [pocket("Ahorro", "30")]);
     expect(b.free.toFixed(2)).toBe("-100.00");

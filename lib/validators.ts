@@ -154,7 +154,22 @@ const optionalPercent = z
     return Number(n) === 0 ? null : n;
   });
 
-export const ownerPaySchema = z.object({ percent: optionalPercent });
+/** Sueldo del dueño de un negocio: un monto fijo al mes o un % de la ganancia del mes. */
+export const ownerPaySchema = z
+  .object({
+    mode: z.enum(["NONE", "FIXED", "PROFIT_PERCENT"]),
+    percent: optionalPercent,
+    amount: amount("El sueldo").optional(),
+    currencyCode: currencyCode.optional(),
+  })
+  .refine((d) => d.mode !== "PROFIT_PERCENT" || d.percent, { message: "Indica el % de la ganancia", path: ["percent"] })
+  .refine((d) => d.mode !== "FIXED" || d.amount, { message: "Indica el monto de tu sueldo", path: ["amount"] });
+
+/** Pago del sueldo de un mes (monto en la divisa del usuario). */
+export const ownerPaymentSchema = z.object({
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Mes inválido"),
+  amount: amount("El sueldo"),
+});
 
 export const fixedBufferSchema = z.object({
   percent: z
