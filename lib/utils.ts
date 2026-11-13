@@ -1,8 +1,9 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { cx } from "@/utils/cx";
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+  // Mismo tailwind-merge que Untitled UI (conoce sus tamaños de texto display-*)
+  return cx(clsx(inputs));
 }
 
 /** Fecha "YYYY-MM-DD" de hoy en hora de Venezuela. */

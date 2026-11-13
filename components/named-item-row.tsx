@@ -18,11 +18,11 @@ export function NamedItemRow({
       <ActionForm action={rename} resetOnSuccess={false} className="flex flex-1 items-center gap-2">
         <Input name="color" type="color" defaultValue={item.color} className="w-10 shrink-0 p-1" />
         <Input name="name" defaultValue={item.name} className="flex-1" required />
-        <SubmitButton variant="ghost" className="h-8 text-xs">
+        <SubmitButton variant="ghost" className="h-10 px-3 text-sm sm:h-8 sm:text-xs">
           Guardar
         </SubmitButton>
       </ActionForm>
-      <ConfirmButton action={toggleArchive} variant="ghost" className="h-8 text-xs text-muted">
+      <ConfirmButton action={toggleArchive} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
         {item.archived ? "Restaurar" : "Archivar"}
       </ConfirmButton>
     </li>

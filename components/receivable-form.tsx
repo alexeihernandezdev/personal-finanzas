@@ -29,7 +29,7 @@ export function ReceivableForm({
   return (
     <ActionForm action={action} className="flex flex-col gap-3">
       <input type="hidden" name="kind" value={kind} />
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-background p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-background p-1">
         {(
           [
             ["RECEIVABLE", "Me van a pagar"],
@@ -40,7 +40,7 @@ export function ReceivableForm({
             key={k}
             type="button"
             onClick={() => setKind(k)}
-            className={cn("rounded-md py-1.5 text-sm font-medium", kind === k ? "bg-surface shadow-sm" : "text-muted")}
+            className={cn("min-h-10 rounded-lg py-2 text-sm font-medium transition sm:min-h-0 sm:py-1.5", kind === k ? "bg-surface shadow-sm" : "text-muted")}
           >
             {label}
           </button>
@@ -65,7 +65,7 @@ export function ReceivableForm({
           </Field>
           <input type="hidden" name="currencyCode" value={loanCurrency ?? "USD"} />
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`Monto (${loanCurrency ?? ""})`}>
+            <Field label={`Monto (${loanCurrency ?? ""})`} hint={loanCurrency === "VES" ? "Se guarda en USD a la tasa del día" : undefined}>
               <Input name="amount" required inputMode="decimal" placeholder="0,00" />
             </Field>
             <Field label="Fecha del préstamo">

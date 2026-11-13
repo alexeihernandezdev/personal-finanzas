@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { assertOwned, OwnershipError, snapshotRate } from "@/lib/guards";
+import { convert } from "@/lib/money";
 import { applyTransactionToPockets, pocketFailure } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate, todayISO } from "@/lib/utils";
@@ -23,11 +24,20 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
   }
 
   const rate = await snapshotRate(user.preferredRateSource);
+  /** Lo registrado en bolívares se guarda en dólares, a la tasa del día. */
+  const inUsd = (currency: string) =>
+    currency === "VES"
+      ? rate.rateVesPerUsd
+        ? { amount: convert(d.amount, "VES", "USD", rate.rateVesPerUsd).toDecimalPlaces(2).toString(), currencyCode: "USD" }
+        : null
+      : { amount: d.amount, currencyCode: currency };
 
   if (d.kind === "LOAN_GIVEN") {
-    // Un préstamo saca el dinero de una cuenta: el préstamo se registra en la divisa de esa cuenta.
+    // Un préstamo saca el dinero de una cuenta (en su divisa); lo que te deben queda en dólares.
     if (!d.walletId) return fail("Elige la cuenta de la que sale el dinero prestado");
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: d.walletId } });
+    const owed = inUsd(wallet.currencyCode);
+    if (!owed) return fail("No hay tasa del día para pasar el préstamo a dólares");
     const date = parseISODate(d.date ?? todayISO());
     const description = `Préstamo a ${d.counterparty}`;
     try {
@@ -38,8 +48,7 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
             kind: "LOAN_GIVEN",
             counterparty: d.counterparty,
             description: d.description ?? "",
-            amount: d.amount,
-            currencyCode: wallet.currencyCode,
+            ...owed,
             expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
             businessId: d.businessId ?? null,
             transactions: {
@@ -69,14 +78,15 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
       return pocketFailure(e);
     }
   } else {
+    const owed = inUsd(d.currencyCode);
+    if (!owed) return fail("No hay tasa del día para pasar el monto a dólares");
     await prisma.receivable.create({
       data: {
         userId: user.id,
         kind: "RECEIVABLE",
         counterparty: d.counterparty,
         description: d.description ?? "",
-        amount: d.amount,
-        currencyCode: d.currencyCode,
+        ...owed,
         expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
         businessId: d.businessId ?? null,
       },

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
-import { Field, Input, Select } from "@/components/ui";
+import { Checkbox, Field, Input, Select } from "@/components/ui";
 import type { ActionState } from "@/lib/action";
 import { dec, Decimal, formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -78,7 +78,7 @@ export function PocketTransferForm({
         ))}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {mode === "percent" && (
           <Field label="Sobre">
             <Select name="base" value={base} onChange={(e) => setBase(e.target.value)}>
@@ -117,10 +117,7 @@ export function PocketTransferForm({
         </p>
       )}
       {to?.isMain && (
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="distribute" defaultChecked />
-          Repartir en {to.name} según su presupuesto
-        </label>
+        <Checkbox name="distribute" defaultChecked label={`Repartir en ${to.name} según su presupuesto`} />
       )}
       <SubmitButton variant="secondary">Pasar</SubmitButton>
     </ActionForm>

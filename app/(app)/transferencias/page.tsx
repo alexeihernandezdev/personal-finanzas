@@ -18,7 +18,7 @@ async function TransferenciasPageContent() {
   return (
     <>
       <PageHeader title="Transferencias" description="Mueve dinero entre tus cuentas, incluso entre divisas" />
-      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1fr]">
         <Card className="h-fit">
           {wallets.length < 2 ? (
             <EmptyState>Necesitas al menos dos cuentas para transferir.</EmptyState>

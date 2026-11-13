@@ -34,7 +34,7 @@ async function IngresosFijosPageContent() {
   return (
     <>
       <PageHeader title="Ingresos fijos" description="Lo que te entra cada mes (sueldo, alquileres, clientes fijos…)" />
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Card>
           <p className="text-sm text-muted">Total mensual</p>
           <p className="text-2xl font-semibold tabular text-positive">{formatMoney(total, user.displayCurrency)}</p>
@@ -47,7 +47,7 @@ async function IngresosFijosPageContent() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div>
           {items.length === 0 ? (
             <EmptyState>No tienes ingresos fijos. Agrega tu sueldo, honorarios, alquileres…</EmptyState>
@@ -71,7 +71,7 @@ async function IngresosFijosPageContent() {
                     </div>
                     <div className="mt-2 flex justify-end">
                       <details className="group">
-                        <summary className="flex h-8 cursor-pointer list-none items-center px-3 text-xs text-muted hover:text-foreground">
+                        <summary className="flex h-10 items-center rounded-lg px-3 text-sm text-muted hover:bg-background hover:text-foreground sm:h-8 sm:text-xs">
                           Editar
                         </summary>
                         <div className="absolute left-4 right-4 z-10 mt-2 rounded-xl border border-border bg-surface p-4 shadow-lg sm:left-auto sm:w-80">
@@ -81,14 +81,14 @@ async function IngresosFijosPageContent() {
                           </ActionForm>
                         </div>
                       </details>
-                      <ConfirmButton action={toggleRecurringIncome.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                      <ConfirmButton action={toggleRecurringIncome.bind(null, r.id)} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
                         {r.active ? "Pausar" : "Activar"}
                       </ConfirmButton>
                       <ConfirmButton
                         action={deleteRecurringIncome.bind(null, r.id)}
                         confirm="¿Eliminar este ingreso fijo?"
                         variant="ghost"
-                        className="h-8 text-xs"
+                        className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
                       >
                         Eliminar
                       </ConfirmButton>

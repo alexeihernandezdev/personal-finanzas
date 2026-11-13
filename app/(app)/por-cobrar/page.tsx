@@ -4,7 +4,8 @@ import Link from "next/link";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { PocketPicker } from "@/components/pocket-picker";
 import { ReceivableForm } from "@/components/receivable-form";
-import { Amount, Badge, Card, EmptyState, Input, PageHeader, Select } from "@/components/ui";
+import { ReceivablePaymentFields } from "@/components/receivable-payment-fields";
+import { Amount, Badge, Card, Checkbox, EmptyState, Input, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { getBusinesses, getPocketChoices, getReceivables, getWalletsWithBalance } from "@/lib/queries";
@@ -12,11 +13,11 @@ import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import { cancelReceivable, createReceivable, deleteReceivable, registerPayment } from "./actions";
 
-const STATUS: Record<string, { label: string; className: string }> = {
-  PENDING: { label: "Pendiente", className: "" },
-  PARTIAL: { label: "Parcial", className: "bg-amber-500/10 text-amber-600" },
-  SETTLED: { label: "Cobrado", className: "bg-positive/10 text-positive" },
-  CANCELLED: { label: "Cancelado", className: "line-through" },
+const STATUS: Record<string, { label: string; color: "gray" | "warning" | "success"; className?: string }> = {
+  PENDING: { label: "Pendiente", color: "gray" },
+  PARTIAL: { label: "Parcial", color: "warning" },
+  SETTLED: { label: "Cobrado", color: "success" },
+  CANCELLED: { label: "Cancelado", color: "gray", className: "line-through" },
 };
 
 async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) {
@@ -44,25 +45,26 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
         }
       }, new Decimal(0));
   const today = todayISO();
+  const walletChoices = wallets.map((w) => ({ id: w.id, name: w.name, currencyCode: w.currencyCode }));
   const tabHref = (t: string, v?: string) => `/por-cobrar?tab=${t}${v ? `&ver=${v}` : ""}`;
   const currentTab = kind === "LOAN_GIVEN" ? "prestamos" : "cobros";
 
   return (
     <>
       <PageHeader title="Por cobrar" description="Dinero que te van a pagar y préstamos que hiciste" />
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+      <div className="mb-6 grid grid-cols-2 gap-3">
         <Card>
           <p className="text-sm text-muted">Te deben (por cobrar)</p>
-          <p className="text-2xl font-semibold tabular">{formatMoney(totalOpen("RECEIVABLE"), user.displayCurrency)}</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(totalOpen("RECEIVABLE"), user.displayCurrency)}</p>
         </Card>
         <Card>
           <p className="text-sm text-muted">Prestado pendiente</p>
-          <p className="text-2xl font-semibold tabular">{formatMoney(totalOpen("LOAN_GIVEN"), user.displayCurrency)}</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(totalOpen("LOAN_GIVEN"), user.displayCurrency)}</p>
         </Card>
       </div>
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
             {[
               ["cobros", "Por cobrar"],
               ["prestamos", "Préstamos"],
@@ -71,14 +73,14 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                 key={t}
                 href={tabHref(t, showAll ? "todos" : undefined)}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-sm",
-                  currentTab === t ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+                  "flex h-10 shrink-0 items-center rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
+                  currentTab === t ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
                 )}
               >
                 {label}
               </Link>
             ))}
-            <Link href={tabHref(currentTab, showAll ? undefined : "todos")} className="ml-auto text-xs text-muted hover:underline">
+            <Link href={tabHref(currentTab, showAll ? undefined : "todos")} className="ml-auto inline-flex min-h-10 items-center px-1 text-sm text-accent hover:underline">
               {showAll ? "Ver solo abiertos" : "Ver también cerrados"}
             </Link>
           </div>
@@ -102,8 +104,8 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {overdue && <Badge className="bg-negative/10 text-negative">Atrasado</Badge>}
-                        <Badge className={STATUS[r.status].className}>{STATUS[r.status].label}</Badge>
+                        {overdue && <Badge color="error">Atrasado</Badge>}
+                        <Badge color={STATUS[r.status].color} className={STATUS[r.status].className}>{STATUS[r.status].label}</Badge>
                       </div>
                     </div>
                     <div className="mt-3 flex items-end justify-between text-sm">
@@ -125,37 +127,35 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                         ))}
                       </ul>
                     )}
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                    <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:flex-wrap sm:items-center">
                       {open && wallets.length > 0 && (
-                        <ActionForm action={registerPayment} className="flex flex-wrap items-center gap-2">
+                        <ActionForm action={registerPayment} className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                           <input type="hidden" name="receivableId" value={r.id} />
-                          <Select name="walletId" className="h-8 w-40 text-xs" defaultValue={wallets.find((w) => w.currencyCode === r.currencyCode)?.id}>
-                            {wallets.map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.name} ({w.currencyCode})
-                              </option>
-                            ))}
-                          </Select>
-                          <Input name="amount" inputMode="decimal" defaultValue={r.remaining.toFixed(2)} className="h-8 w-28 text-xs" />
-                          <Input name="date" type="date" defaultValue={today} className="h-8 w-36 text-xs" />
-                          <PocketPicker pockets={pockets} direction="in" className="h-8 w-44 text-xs" />
+                          <ReceivablePaymentFields
+                            wallets={walletChoices}
+                            remaining={r.remaining.toFixed(2)}
+                            currencyCode={r.currencyCode}
+                            rate={rate?.toString() ?? null}
+                          />
+                          <Input name="date" type="date" defaultValue={today} className="sm:h-8 sm:w-36 sm:text-xs" />
+                          <PocketPicker pockets={pockets} direction="in" className="col-span-2 sm:h-8 sm:w-44 sm:text-xs" />
                           {r.kind === "RECEIVABLE" && (
-                            <label
-                              className="flex items-center gap-1.5 text-xs text-muted"
+                            <Checkbox
+                              name="distribute"
+                              defaultChecked
+                              label="Repartir según el presupuesto"
                               title="Si entra a una Caja, se reparte entre sus apartados según el presupuesto"
-                            >
-                              <input type="checkbox" name="distribute" defaultChecked />
-                              Repartir
-                            </label>
+                              className="col-span-2"
+                            />
                           )}
-                          <SubmitButton variant="secondary" className="h-8 text-xs">
+                          <SubmitButton className="col-span-2 sm:h-8 sm:text-xs">
                             Registrar cobro
                           </SubmitButton>
                         </ActionForm>
                       )}
-                      <div className="ml-auto flex">
+                      <div className="-mx-2 flex flex-wrap sm:mx-0 sm:ml-auto">
                         {r.status !== "SETTLED" && (
-                          <ConfirmButton action={cancelReceivable.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                          <ConfirmButton action={cancelReceivable.bind(null, r.id)} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
                             {r.status === "CANCELLED" ? "Reabrir" : "Cancelar"}
                           </ConfirmButton>
                         )}
@@ -163,7 +163,7 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                           action={deleteReceivable.bind(null, r.id)}
                           confirm="¿Eliminar? También se borran los movimientos asociados (préstamo y cobros)."
                           variant="ghost"
-                          className="h-8 text-xs"
+                          className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
                         >
                           Eliminar
                         </ConfirmButton>
@@ -179,7 +179,7 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
           <h2 className="mb-4 font-semibold">Nuevo registro</h2>
           <ReceivableForm
             action={createReceivable}
-            wallets={wallets.map((w) => ({ id: w.id, name: w.name, currencyCode: w.currencyCode }))}
+            wallets={walletChoices}
             businesses={businesses.map((b) => ({ id: b.id, name: b.name }))}
             pockets={pockets}
             today={today}

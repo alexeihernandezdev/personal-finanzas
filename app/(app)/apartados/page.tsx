@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { PageSkeleton } from "@/components/page-skeleton";
+import { ChevronRight, Star, X } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { PocketFields, pocketKindLabel } from "@/components/pocket-fields";
 import { PocketTransferForm, type TransferDestination } from "@/components/pocket-transfer-form";
@@ -75,18 +76,18 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
   return (
     <>
       <PageHeader title="Apartados" description="Separa el dinero que no debes tocar: ahorros, metas y reservas" />
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Card>
           <p className="text-sm text-muted">En cuentas</p>
-          <p className="mt-1 text-2xl font-semibold tabular">{formatMoney(total, cur)}</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(total, cur)}</p>
         </Card>
         <Card>
           <p className="text-sm text-muted">Apartado</p>
-          <p className="mt-1 text-2xl font-semibold tabular">{formatMoney(reserved, cur)}</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(reserved, cur)}</p>
         </Card>
-        <Card>
+        <Card className="col-span-2 sm:col-span-1">
           <p className="text-sm text-muted">Disponible para usar</p>
-          <p className="mt-1 text-2xl font-semibold">
+          <p className="mt-1 truncate text-xl font-semibold sm:text-2xl">
             <Amount value={formatMoney(available, cur)} />
           </p>
         </Card>
@@ -96,16 +97,16 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
           Gastaste dinero apartado. Libera parte de un apartado o repón el saldo de tus cuentas.
         </p>
       )}
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex flex-col gap-6">
-          <nav className="flex flex-wrap gap-2" aria-label="Dueño del dinero">
+          <nav className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="Dueño del dinero">
             {tabs.map((t) => (
               <Link
                 key={t.key}
                 href={`/apartados?negocio=${t.key}`}
                 className={cn(
-                  "flex items-baseline gap-2 rounded-lg px-3 py-1.5 text-sm",
-                  currentTab.key === t.key ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+                  "flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
+                  currentTab.key === t.key ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
                 )}
               >
                 {t.name}
@@ -120,7 +121,7 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
                 {tabBusinessId ? "este negocio" : "lo personal"} y los reparte según su presupuesto. Se crea sola con el
                 primer ingreso.
               </p>
-              <ConfirmButton action={createMainPocket.bind(null, tabBusinessId)} variant="secondary" className="h-8 text-xs">
+              <ConfirmButton action={createMainPocket.bind(null, tabBusinessId)} variant="secondary" className="h-10 px-3 text-sm sm:h-8 sm:text-xs">
                 Crear Caja ahora
               </ConfirmButton>
             </div>
@@ -197,7 +198,7 @@ function PocketCard({
         <div>
           <p className="flex items-center gap-2 font-medium">
             {p.name}
-            {p.isMain && <Badge className="bg-accent-soft text-accent">Caja</Badge>}
+            {p.isMain && <Badge color="brand">Caja</Badge>}
           </p>
           <p className="text-xs text-muted">
             {p.isMain ? "Recibe los ingresos y los reparte según el presupuesto" : pocketKindLabel(p.kind)} · {currency}
@@ -215,9 +216,12 @@ function PocketCard({
             <ConfirmButton
               action={togglePinPocket.bind(null, p.id)}
               variant="ghost"
-              className={cn("h-7 px-2 text-xs", p.pinned ? "text-accent" : "text-muted")}
+              className={cn("-mt-1 -mr-2 size-10 px-0 sm:size-8", p.pinned ? "text-amber-500" : "text-muted")}
             >
-              <span title={p.pinned ? "Quitar del inicio" : "Fijar en el inicio"}>{p.pinned ? "★" : "☆"}</span>
+              <Star
+                className={cn("size-4", p.pinned && "fill-current")}
+                aria-label={p.pinned ? "Quitar del inicio" : "Fijar en el inicio"}
+              />
             </ConfirmButton>
           )}
         </div>
@@ -228,29 +232,29 @@ function PocketCard({
             <div className="h-full" style={{ width: `${pct}%`, background: p.color }} />
           </div>
           <span className="text-xs tabular text-muted">{pct.toFixed(0)}%</span>
-          {pct >= 100 && <Badge className="bg-positive/10 text-positive">¡Meta cumplida!</Badge>}
+          {pct >= 100 && <Badge color="success">¡Meta cumplida!</Badge>}
         </div>
       )}
 
       {!p.archived && (
-        <ActionForm action={movePocketMoney} className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+        <ActionForm action={movePocketMoney} className="mt-3 grid grid-cols-2 gap-2 border-t border-border pt-3 sm:flex sm:flex-wrap sm:items-center">
           <input type="hidden" name="pocketId" value={p.id} />
-          <Select name="direction" className="h-8 w-28 text-xs" defaultValue="IN">
+          <Select name="direction" className="sm:h-8 sm:w-28 sm:text-xs" defaultValue="IN">
             <option value="IN">Apartar</option>
             <option value="OUT">Liberar</option>
           </Select>
-          <Input name="amount" inputMode="decimal" placeholder="Monto" required className="h-8 w-28 text-xs" />
-          <Input name="date" type="date" defaultValue={today} className="h-8 w-36 text-xs" />
-          <Input name="description" placeholder="Nota (opcional)" maxLength={200} className="h-8 min-w-32 flex-1 text-xs" />
-          <SubmitButton variant="secondary" className="h-8 text-xs">
+          <Input name="amount" inputMode="decimal" placeholder="Monto" required className="sm:h-8 sm:w-28 sm:text-xs" />
+          <Input name="date" type="date" defaultValue={today} className="sm:h-8 sm:w-36 sm:text-xs" />
+          <Input name="description" placeholder="Nota (opcional)" maxLength={200} className="sm:h-8 sm:min-w-32 sm:flex-1 sm:text-xs" />
+          <SubmitButton className="col-span-2 sm:h-8 sm:text-xs">
             Guardar
           </SubmitButton>
         </ActionForm>
       )}
 
       {!p.archived && destinations.length > 0 && p.balance.gt(0) && (
-        <details className="mt-3 text-xs">
-          <summary className="cursor-pointer text-muted hover:text-foreground">Pasar a otro apartado</summary>
+        <details className="group mt-2 text-xs">
+          <summary className="-mx-1 flex min-h-10 items-center gap-1 rounded-lg px-1 text-sm text-muted hover:text-foreground sm:min-h-8 sm:text-xs"><ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />Pasar a otro apartado</summary>
           <div className="mt-3 text-sm">
             <PocketTransferForm
               action={transferPocketMoney}
@@ -270,12 +274,12 @@ function PocketCard({
       )}
 
       {p.movements.length > 0 && (
-        <details className="mt-3 text-xs">
-          <summary className="cursor-pointer text-muted hover:text-foreground">Últimos movimientos</summary>
+        <details className="group mt-2 text-xs">
+          <summary className="-mx-1 flex min-h-10 items-center gap-1 rounded-lg px-1 text-sm text-muted hover:text-foreground sm:min-h-8 sm:text-xs"><ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />Últimos movimientos</summary>
           <ul className="mt-2 divide-y divide-border">
             {p.movements.map((m) => (
               <li key={m.id} className="flex items-center gap-2 py-1.5">
-                <span className="w-24 text-muted">{formatDate(m.date)}</span>
+                <span className="w-20 shrink-0 text-muted sm:w-24">{formatDate(m.date)}</span>
                 <span className="flex-1 truncate">{m.description || (m.amount.isNegative() ? "Liberado" : "Apartado")}</span>
                 <Amount value={formatMoney(m.amount.toString(), currency, { sign: true })} />
                 <ConfirmButton
@@ -286,9 +290,9 @@ function PocketCard({
                       : "¿Eliminar este movimiento del apartado?"
                   }
                   variant="ghost"
-                  className="h-7 px-2 text-xs"
+                  className="size-9 px-0 text-muted"
                 >
-                  ✕
+                  <X className="size-3.5" aria-label="Eliminar" />
                 </ConfirmButton>
               </li>
             ))}
@@ -296,10 +300,10 @@ function PocketCard({
         </details>
       )}
 
-      <details className="mt-2 text-xs">
-        <summary className="cursor-pointer text-muted hover:text-foreground">Editar</summary>
+      <details className="group mt-1 text-xs">
+        <summary className="-mx-1 flex min-h-10 items-center gap-1 rounded-lg px-1 text-sm text-muted hover:text-foreground sm:min-h-8 sm:text-xs"><ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />Editar</summary>
         <div className="mt-3 flex flex-col gap-3">
-          <ActionForm action={updatePocket.bind(null, p.id)} resetOnSuccess={false} className="grid gap-3 sm:grid-cols-2">
+          <ActionForm action={updatePocket.bind(null, p.id)} resetOnSuccess={false} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <PocketFields
               businesses={businesses}
               currencyLocked={!p.balance.isZero()}
@@ -318,7 +322,7 @@ function PocketCard({
           </ActionForm>
           <div className="flex flex-wrap gap-2">
             {!p.isMain && (p.archived || p.balance.isZero()) && (
-              <ConfirmButton action={toggleArchivePocket.bind(null, p.id)} variant="secondary" className="h-8 text-xs">
+              <ConfirmButton action={toggleArchivePocket.bind(null, p.id)} variant="secondary" className="h-10 px-3 text-sm sm:h-8 sm:text-xs">
                 {p.archived ? "Restaurar" : "Archivar"}
               </ConfirmButton>
             )}
@@ -326,7 +330,7 @@ function PocketCard({
               <ConfirmButton
                 action={deletePocket.bind(null, p.id)}
                 confirm="¿Eliminar el apartado? Su dinero vuelve a estar disponible."
-                className="h-8 text-xs"
+                className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
               >
                 Eliminar apartado
               </ConfirmButton>

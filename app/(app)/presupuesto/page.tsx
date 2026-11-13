@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Info } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Card, EmptyState, Field, Input, PageHeader, SectionTitle } from "@/components/ui";
 import { bucketShares, formatPercent, SUGGESTED_BUCKETS, type BudgetOverview } from "@/lib/budget";
@@ -63,21 +63,27 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
         title="Presupuesto"
         description="Cómo se reparte el dinero de cada dueño: Personal y cada negocio"
       />
-      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Dueño del presupuesto">
+      <nav className="no-scrollbar -mx-4 mb-5 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:mb-6 sm:flex-wrap sm:px-0" aria-label="Dueño del presupuesto">
         {tabs.map((t) => (
           <Link
             key={t.key}
             href={`/presupuesto?negocio=${t.key}`}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-sm",
-              currentTab.key === t.key ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+              "flex h-10 shrink-0 items-center rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
+              currentTab.key === t.key ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
             )}
           >
             {t.name}
           </Link>
         ))}
       </nav>
-      <p className="mb-6 rounded-lg bg-background px-4 py-3 text-sm text-muted">
+      <details className="group mb-6 rounded-2xl border border-border bg-surface text-sm">
+        <summary className="flex min-h-12 items-center gap-2 px-4 font-medium">
+          <Info className="size-4 text-accent" />
+          ¿Cómo se reparte el dinero?
+          <ChevronDown className="ml-auto size-4 text-muted transition-transform group-open:rotate-180" />
+        </summary>
+        <p className="px-4 pb-4 text-pretty text-muted">      
         Cuando entra dinero a{" "}
         <span className="font-medium text-foreground">{caja?.name ?? `la Caja ${currentTab.name}`}</span>, primero se
         reserva lo que falta para los próximos gastos fijos y el colchón, empezando por el que vence antes. Lo que sobra se
@@ -85,6 +91,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
         libre se queda en la Caja.
         {businessId && " Para pasarte un sueldo, crea una partida que vaya a Personal."}
       </p>
+      </details>
 
       {noIncome && (
         <div className="mb-6">
@@ -98,7 +105,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
         </div>
       )}
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card>
           <p className="text-sm text-muted">Ingresos fijos</p>
           <p className="mt-1 text-2xl font-semibold tabular text-positive">{formatMoney(budget.income, cur)}</p>
@@ -110,7 +117,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
           <p className="text-sm text-muted">Gastos fijos</p>
           <p className="mt-1 text-2xl font-semibold tabular">
             {noIncome ? "—" : formatPercent(budget.fixedPercent)}
-            <span className="ml-2 text-sm font-normal text-muted">de tus ingresos</span>
+            <span className="ml-1.5 text-xs font-normal text-muted">de ingresos</span>
           </p>
           <p className="text-xs tabular text-muted">
             {formatMoney(budget.fixed, cur)} ·{" "}
@@ -141,7 +148,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section>
           <SectionTitle>Distribución</SectionTitle>
           <Card>
@@ -163,8 +170,8 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                     </span>
                   )}
                 </span>
-                <span className="w-16 text-right tabular text-muted">{noIncome ? "—" : formatPercent(budget.fixedPercent)}</span>
-                <span className="w-28 text-right tabular">{formatMoney(budget.fixed, cur)}</span>
+                <span className="w-11 shrink-0 text-right tabular sm:w-16 text-muted">{noIncome ? "—" : formatPercent(budget.fixedPercent)}</span>
+                <span className="shrink-0 text-right tabular sm:w-28">{formatMoney(budget.fixed, cur)}</span>
                 <span className={rowActions} />
               </li>
               <li className="flex items-center gap-3 py-2.5 text-sm">
@@ -175,10 +182,10 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                     {formatPercent(budget.bufferPercent)} sobre tus gastos fijos para imprevistos
                   </span>
                 </span>
-                <span className="w-16 text-right tabular text-muted">
+                <span className="w-11 shrink-0 text-right tabular sm:w-16 text-muted">
                   {noIncome ? "—" : formatPercent(budget.bufferIncomePercent)}
                 </span>
-                <span className="w-28 text-right tabular">{formatMoney(budget.buffer, cur)}</span>
+                <span className="shrink-0 text-right tabular sm:w-28">{formatMoney(budget.buffer, cur)}</span>
                 <span className={rowActions}>
                   <EditBufferButton percent={budget.bufferPercent.toString()} />
                 </span>
@@ -194,12 +201,20 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
                       </span>
                     )}
                   </span>
-                  <span className="w-16 text-right tabular text-muted">{formatPercent(b.percent)}</span>
-                  <span className="w-28 text-right tabular">{formatMoney(b.amount, cur)}</span>
+                  <span className="w-11 shrink-0 text-right tabular sm:w-16 text-muted">{formatPercent(b.percent)}</span>
+                  <span className="shrink-0 text-right tabular sm:w-28">{formatMoney(b.amount, cur)}</span>
                   <span className={rowActions}>
-                    <MoveButton id={b.id} direction="up" disabled={i === 0} />
-                    <MoveButton id={b.id} direction="down" disabled={i === budget.buckets.length - 1} />
+                    <span className="hidden sm:contents">
+                      <MoveButton id={b.id} direction="up" disabled={i === 0} />
+                      <MoveButton id={b.id} direction="down" disabled={i === budget.buckets.length - 1} />
+                    </span>
                     <EditBucketButton
+                      orderControls={
+                        <>
+                          <MoveButton id={b.id} direction="up" disabled={i === 0} />
+                          <MoveButton id={b.id} direction="down" disabled={i === budget.buckets.length - 1} />
+                        </>
+                      }
                       bucket={{ id: b.id, name: b.name, percent: b.percent.toString(), color: b.color, pocketId: b.pocketId ?? null }}
                       pockets={pocketOptions}
                       owners={ownerOptions}
@@ -210,10 +225,10 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
               <li className="flex items-center gap-3 py-2.5 text-sm">
                 <span className="size-3 shrink-0 rounded-full border border-dashed border-muted" />
                 <span className="flex-1 font-medium">Libre</span>
-                <span className={cn("w-16 text-right tabular", budget.overBudget ? "text-negative" : "text-muted")}>
+                <span className={cn("w-11 shrink-0 text-right tabular sm:w-16", budget.overBudget ? "text-negative" : "text-muted")}>
                   {noIncome ? "—" : formatPercent(budget.freePercent)}
                 </span>
-                <span className={cn("w-28 text-right tabular", budget.overBudget && "text-negative")}>
+                <span className={cn("shrink-0 text-right tabular sm:w-28", budget.overBudget && "text-negative")}>
                   {formatMoney(budget.free, cur)}
                 </span>
                 <span className={rowActions} />
@@ -305,7 +320,7 @@ async function PresupuestoPageContent({ searchParams }: PageProps<"/presupuesto"
 }
 
 /** Columna de acciones de cada fila (ordenar, editar); vacía en las filas fijas para alinear montos. */
-const rowActions = "flex w-[5.25rem] shrink-0 items-center justify-end";
+const rowActions = "-mr-2 flex w-10 shrink-0 items-center justify-end sm:mr-0 sm:w-[6rem]";
 
 function MoveButton({ id, direction, disabled }: { id: string; direction: "up" | "down"; disabled: boolean }) {
   const Icon = direction === "up" ? ChevronUp : ChevronDown;
@@ -317,7 +332,7 @@ function MoveButton({ id, direction, disabled }: { id: string; direction: "up" |
         disabled={disabled}
         aria-label={label}
         title={label}
-        className="rounded-lg p-1.5 text-muted transition hover:bg-background hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        className="flex size-10 items-center justify-center rounded-lg text-muted transition sm:size-8 hover:bg-background hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
       >
         <Icon className="size-3.5" />
       </button>

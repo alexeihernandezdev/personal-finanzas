@@ -41,7 +41,7 @@ export function TransferForm({
   return (
     <ActionForm
       action={action}
-      className="grid gap-4 sm:grid-cols-2"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2"
       onSuccess={() => {
         setOut("");
         setInn("");

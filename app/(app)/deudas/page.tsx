@@ -12,11 +12,11 @@ import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import { cancelDebt, createDebt, deleteDebt, deleteDebtPayment, registerDebtPayment, updateDebtTransaction } from "./actions";
 
-const STATUS: Record<string, { label: string; className: string }> = {
-  PENDING: { label: "Pendiente", className: "" },
-  PARTIAL: { label: "Parcial", className: "bg-amber-500/10 text-amber-600" },
-  SETTLED: { label: "Pagado", className: "bg-positive/10 text-positive" },
-  CANCELLED: { label: "Cancelado", className: "line-through" },
+const STATUS: Record<string, { label: string; color: "gray" | "warning" | "success"; className?: string }> = {
+  PENDING: { label: "Pendiente", color: "gray" },
+  PARTIAL: { label: "Parcial", color: "warning" },
+  SETTLED: { label: "Pagado", color: "success" },
+  CANCELLED: { label: "Cancelado", color: "gray", className: "line-through" },
 };
 
 async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
@@ -50,19 +50,19 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
   return (
     <>
       <PageHeader title="Deudas" description="Lo que debes pagar y préstamos que te hicieron" />
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+      <div className="mb-6 grid grid-cols-2 gap-3">
         <Card>
-          <p className="text-sm text-muted">Debes (por pagar)</p>
-          <p className="text-2xl font-semibold tabular">{formatMoney(totalOpen("PAYABLE"), user.displayCurrency)}</p>
+          <p className="text-sm text-muted">Por pagar</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(totalOpen("PAYABLE"), user.displayCurrency)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted">Préstamos por devolver</p>
-          <p className="text-2xl font-semibold tabular">{formatMoney(totalOpen("LOAN_RECEIVED"), user.displayCurrency)}</p>
+          <p className="text-sm text-muted">Préstamos</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(totalOpen("LOAN_RECEIVED"), user.displayCurrency)}</p>
         </Card>
       </div>
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div>
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
             {[
               ["deudas", "Por pagar"],
               ["prestamos", "Préstamos recibidos"],
@@ -71,14 +71,14 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                 key={t}
                 href={tabHref(t, showAll ? "todos" : undefined)}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-sm",
-                  currentTab === t ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+                  "flex h-10 shrink-0 items-center rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
+                  currentTab === t ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
                 )}
               >
                 {label}
               </Link>
             ))}
-            <Link href={tabHref(currentTab, showAll ? undefined : "todos")} className="ml-auto text-xs text-muted hover:underline">
+            <Link href={tabHref(currentTab, showAll ? undefined : "todos")} className="ml-auto inline-flex min-h-10 items-center px-1 text-sm text-accent hover:underline">
               {showAll ? "Ver solo abiertos" : "Ver también cerrados"}
             </Link>
           </div>
@@ -102,8 +102,8 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {overdue && <Badge className="bg-negative/10 text-negative">Atrasado</Badge>}
-                        <Badge className={STATUS[r.status].className}>{STATUS[r.status].label}</Badge>
+                        {overdue && <Badge color="error">Atrasado</Badge>}
+                        <Badge color={STATUS[r.status].color} className={STATUS[r.status].className}>{STATUS[r.status].label}</Badge>
                       </div>
                     </div>
                     <div className="mt-3 flex items-end justify-between text-sm">
@@ -129,9 +129,9 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                                 <ActionForm
                                   action={updateDebtTransaction.bind(null, t.id)}
                                   resetOnSuccess={false}
-                                  className="flex flex-wrap items-center gap-2"
+                                  className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center"
                                 >
-                                  <Select name="walletId" className="h-8 w-40 text-xs" defaultValue={t.walletId}>
+                                  <Select name="walletId" className="col-span-2 sm:h-8 sm:w-40 sm:text-xs" defaultValue={t.walletId}>
                                     {!wallets.some((w) => w.id === t.walletId) && (
                                       <option value={t.walletId}>
                                         {t.wallet.name} ({t.wallet.currencyCode})
@@ -143,9 +143,9 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                                       </option>
                                     ))}
                                   </Select>
-                                  <Input name="amount" inputMode="decimal" defaultValue={t.amount.toFixed(2)} className="h-8 w-28 text-xs" />
-                                  <Input name="date" type="date" defaultValue={toISODate(t.date)} className="h-8 w-36 text-xs" />
-                                  <SubmitButton variant="secondary" className="h-8 text-xs">
+                                  <Input name="amount" inputMode="decimal" defaultValue={t.amount.toFixed(2)} className="sm:h-8 sm:w-28 sm:text-xs" />
+                                  <Input name="date" type="date" defaultValue={toISODate(t.date)} className="sm:h-8 sm:w-36 sm:text-xs" />
+                                  <SubmitButton className="col-span-2 sm:h-8 sm:text-xs">
                                     Guardar
                                   </SubmitButton>
                                 </ActionForm>
@@ -154,7 +154,7 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                                     action={deleteDebtPayment.bind(null, t.id)}
                                     confirm="¿Eliminar este pago? La deuda se reabrirá si queda saldo pendiente."
                                     variant="ghost"
-                                    className="h-8 text-xs"
+                                    className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
                                   >
                                     Eliminar pago
                                   </ConfirmButton>
@@ -165,28 +165,28 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                         ))}
                       </ul>
                     )}
-                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                    <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:flex-wrap sm:items-center">
                       {open && wallets.length > 0 && (
-                        <ActionForm action={registerDebtPayment} className="flex flex-wrap items-center gap-2">
+                        <ActionForm action={registerDebtPayment} className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                           <input type="hidden" name="debtId" value={r.id} />
-                          <Select name="walletId" className="h-8 w-40 text-xs" defaultValue={wallets.find((w) => w.currencyCode === r.currencyCode)?.id}>
+                          <Select name="walletId" className="col-span-2 sm:h-8 sm:w-40 sm:text-xs" defaultValue={wallets.find((w) => w.currencyCode === r.currencyCode)?.id}>
                             {wallets.map((w) => (
                               <option key={w.id} value={w.id}>
                                 {w.name} ({w.currencyCode})
                               </option>
                             ))}
                           </Select>
-                          <Input name="amount" inputMode="decimal" defaultValue={r.remaining.toFixed(2)} className="h-8 w-28 text-xs" />
-                          <Input name="date" type="date" defaultValue={today} className="h-8 w-36 text-xs" />
-                          <PocketPicker pockets={pockets} direction="out" className="h-8 w-44 text-xs" />
-                          <SubmitButton variant="secondary" className="h-8 text-xs">
+                          <Input name="amount" inputMode="decimal" defaultValue={r.remaining.toFixed(2)} className="sm:h-8 sm:w-28 sm:text-xs" />
+                          <Input name="date" type="date" defaultValue={today} className="sm:h-8 sm:w-36 sm:text-xs" />
+                          <PocketPicker pockets={pockets} direction="out" className="col-span-2 sm:h-8 sm:w-44 sm:text-xs" />
+                          <SubmitButton className="col-span-2 sm:h-8 sm:text-xs">
                             Registrar pago
                           </SubmitButton>
                         </ActionForm>
                       )}
-                      <div className="ml-auto flex">
+                      <div className="-mx-2 flex flex-wrap sm:mx-0 sm:ml-auto">
                         {r.status !== "SETTLED" && (
-                          <ConfirmButton action={cancelDebt.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                          <ConfirmButton action={cancelDebt.bind(null, r.id)} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
                             {r.status === "CANCELLED" ? "Reabrir" : "Cancelar"}
                           </ConfirmButton>
                         )}
@@ -194,7 +194,7 @@ async function DeudasPageContent({ searchParams }: PageProps<"/deudas">) {
                           action={deleteDebt.bind(null, r.id)}
                           confirm="¿Eliminar? También se borran los movimientos asociados (préstamo y pagos)."
                           variant="ghost"
-                          className="h-8 text-xs"
+                          className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
                         >
                           Eliminar
                         </ConfirmButton>

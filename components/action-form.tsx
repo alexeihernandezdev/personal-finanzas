@@ -3,8 +3,7 @@
 import { useActionState, useEffect, useRef, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionState } from "@/lib/action";
-import { cn } from "@/lib/utils";
-import { buttonClass } from "./ui";
+import { Button } from "./ui";
 
 type Action = (prev: ActionState, formData: FormData) => Promise<ActionState>;
 
@@ -47,12 +46,12 @@ export function ActionForm({
     <form ref={ref} action={formAction} className={className}>
       {children}
       {state?.error && (
-        <p role="alert" className="col-span-full rounded-lg bg-negative/10 px-3 py-2 text-sm text-negative">
+        <p role="alert" className="col-span-full rounded-lg bg-error-primary px-3 py-2 text-sm text-error-primary ring-1 ring-error_subtle ring-inset">
           {state.error}
         </p>
       )}
       {state?.ok && state.message && (
-        <p className="col-span-full rounded-lg bg-positive/10 px-3 py-2 text-sm text-positive">{state.message}</p>
+        <p className="col-span-full rounded-lg bg-success-primary px-3 py-2 text-sm text-success-primary">{state.message}</p>
       )}
     </form>
   );
@@ -69,9 +68,9 @@ export function SubmitButton({
 }) {
   const { pending } = useFormStatus();
   return (
-    <button type="submit" disabled={pending} className={cn(buttonClass(variant), className)}>
-      {pending ? "Guardando…" : children}
-    </button>
+    <Button type="submit" variant={variant} isLoading={pending} className={className}>
+      {children}
+    </Button>
   );
 }
 

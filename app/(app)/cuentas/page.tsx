@@ -36,12 +36,12 @@ async function CuentasPageContent() {
         title="Cuentas"
         description={`Total: ${formatMoney(total, user.displayCurrency)} · Disponible: ${formatMoney(available, user.displayCurrency)} (tasa ${user.preferredRateSource === "BCV" ? "BCV" : "Binance"})`}
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-6">
           {active.length === 0 ? (
             <EmptyState>Todavía no tienes cuentas. Crea la primera con el formulario.</EmptyState>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {active.map((w) => (
                 <WalletCard key={w.id} wallet={w} />
               ))}
@@ -50,7 +50,7 @@ async function CuentasPageContent() {
           {archived.length > 0 && (
             <div>
               <SectionTitle>Archivadas</SectionTitle>
-              <div className="grid gap-3 opacity-70 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 opacity-70 sm:grid-cols-2">
                 {archived.map((w) => (
                   <WalletCard key={w.id} wallet={w} />
                 ))}

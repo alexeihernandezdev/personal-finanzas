@@ -34,7 +34,7 @@ async function CuentaPageContent({ params, searchParams }: PageProps<"/cuentas/[
           </Link>
         }
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
         <div className="flex flex-col gap-4">
           <Card>
             <p className="text-sm text-muted">Saldo actual</p>

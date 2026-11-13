@@ -29,7 +29,7 @@ export function DebtForm({
   return (
     <ActionForm action={action} className="flex flex-col gap-3">
       <input type="hidden" name="kind" value={kind} />
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-background p-1">
+      <div className="grid grid-cols-2 gap-1 rounded-xl bg-background p-1">
         {(
           [
             ["PAYABLE", "Debo pagar"],
@@ -40,7 +40,7 @@ export function DebtForm({
             key={k}
             type="button"
             onClick={() => setKind(k)}
-            className={cn("rounded-md py-1.5 text-sm font-medium", kind === k ? "bg-surface shadow-sm" : "text-muted")}
+            className={cn("min-h-10 rounded-lg py-2 text-sm font-medium transition sm:min-h-0 sm:py-1.5", kind === k ? "bg-surface shadow-sm" : "text-muted")}
           >
             {label}
           </button>

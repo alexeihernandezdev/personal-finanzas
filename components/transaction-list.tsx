@@ -1,5 +1,14 @@
 import Link from "next/link";
-import { Pencil, X } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowLeftRight,
+  ArrowUpRight,
+  HandCoins,
+  Pencil,
+  SlidersHorizontal,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { deleteTransaction } from "@/app/(app)/movimientos/actions";
 import { ConfirmButton } from "@/components/action-form";
 import { Amount, Badge, Card, EmptyState } from "@/components/ui";
@@ -20,6 +29,19 @@ export const TYPE_LABELS: Record<string, string> = {
   DEBT_PAYMENT: "Pago de deuda",
   ADJUSTMENT_IN: "Ajuste",
   ADJUSTMENT_OUT: "Ajuste",
+};
+
+const TYPE_ICONS: Record<string, LucideIcon> = {
+  INCOME: ArrowDownLeft,
+  EXPENSE: ArrowUpRight,
+  TRANSFER_OUT: ArrowLeftRight,
+  TRANSFER_IN: ArrowLeftRight,
+  LOAN_OUT: HandCoins,
+  LOAN_REPAYMENT: HandCoins,
+  LOAN_IN: HandCoins,
+  DEBT_PAYMENT: HandCoins,
+  ADJUSTMENT_IN: SlidersHorizontal,
+  ADJUSTMENT_OUT: SlidersHorizontal,
 };
 
 /**
@@ -66,7 +88,7 @@ export async function TransactionList({
   if (transactions.length === 0) return <EmptyState>No hay movimientos.</EmptyState>;
   const display = await getDisplay(transactions, currency);
   return (
-    <Card className="p-0">
+    <Card className="p-0 sm:p-0">
       <ul className="divide-y divide-border">
         {transactions.map((t) => {
           const editable = t.type === "INCOME" || t.type === "EXPENSE";
@@ -77,56 +99,69 @@ export async function TransactionList({
               ? `${TYPE_LABELS[t.type]} · ${(t.receivable ?? t.debt)!.counterparty}`
               : TYPE_LABELS[t.type]);
           const amount = display(t, signedAmount(t.type, t.amount), { sign: true });
+          const color = t.category?.color ?? (t.type.startsWith("TRANSFER") ? "#6366f1" : "#94a3b8");
+          const Icon = TYPE_ICONS[t.type] ?? ArrowLeftRight;
+          const businessSplits = t.splits.filter((s) => s.business);
+          const hasBadges = !editable || t.recurring || businessSplits.length > 0;
+          const confirm = t.transferGroupId
+            ? "Se borrarán las dos partes de la transferencia. ¿Continuar?"
+            : "¿Borrar este movimiento?";
           return (
-            <li key={t.id} className="flex items-center gap-3 px-4 py-3">
+            <li key={t.id} className="relative flex items-center gap-3 px-4 py-3 transition-colors has-[a.row-link:active]:bg-background">
+              {/* En móvil toda la fila abre la edición; en escritorio están los botones */}
+              {editable && (
+                <Link href={`/movimientos/${t.id}`} className="row-link absolute inset-0 sm:hidden" aria-label={`Editar ${title}`} />
+              )}
               <span
-                className="size-2.5 shrink-0 rounded-full"
-                style={{ background: t.category?.color ?? (t.type.startsWith("TRANSFER") ? "#6366f1" : "#94a3b8") }}
-              />
+                className="flex size-9 shrink-0 items-center justify-center rounded-xl"
+                style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
+                aria-hidden
+              >
+                <Icon className="size-4" />
+              </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{title}</p>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
-                  <span>{formatDate(t.date)}</span>
-                  {!hideWallet && <span>· {t.wallet.name}</span>}
-                  {t.category && t.description && <span>· {t.category.name}</span>}
-                  {!editable && <Badge>{TYPE_LABELS[t.type]}</Badge>}
-                  {t.recurring && <Badge>Fijo: {t.recurring.name}</Badge>}
-                  {t.splits
-                    .filter((s) => s.business)
-                    .map((s) => (
-                      <Badge key={s.id} className="gap-1">
+                <p className="mt-0.5 truncate text-xs text-muted">
+                  {formatDate(t.date)}
+                  {!hideWallet && ` · ${t.wallet.name}`}
+                  {t.category && t.description && ` · ${t.category.name}`}
+                </p>
+                {hasBadges && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {!editable && <Badge>{TYPE_LABELS[t.type]}</Badge>}
+                    {t.recurring && <Badge>Fijo: {t.recurring.name}</Badge>}
+                    {businessSplits.map((s) => (
+                      <Badge key={s.id}>
                         <span className="size-1.5 rounded-full" style={{ background: s.business!.color }} />
                         {s.business!.name}
                         {t.splits.length > 1 && ` ${display(t, s.amount).main}`}
                       </Badge>
                     ))}
-                </div>
+                  </div>
+                )}
               </div>
-              <div className="flex flex-col items-end">
-                <Amount className="text-sm font-medium" value={amount.main} />
+              <div className="flex shrink-0 flex-col items-end">
+                <Amount className="text-sm font-semibold" value={amount.main} />
                 {amount.original && <span className="tabular text-xs text-muted">{amount.original}</span>}
               </div>
-              <div className="flex items-center">
+              <div className={editable ? "hidden items-center sm:flex" : "relative flex items-center"}>
                 {editable && (
                   <Link
                     href={`/movimientos/${t.id}`}
-                    className="rounded-md p-1.5 text-muted hover:bg-background hover:text-foreground"
+                    className="flex size-8 items-center justify-center rounded-lg text-muted hover:bg-background hover:text-foreground"
                     title="Editar"
+                    aria-label="Editar"
                   >
                     <Pencil className="size-3.5" />
                   </Link>
                 )}
                 <ConfirmButton
                   action={deleteTransaction.bind(null, t.id)}
-                  confirm={
-                    t.transferGroupId
-                      ? "Se borrarán las dos partes de la transferencia. ¿Continuar?"
-                      : "¿Borrar este movimiento?"
-                  }
+                  confirm={confirm}
                   variant="ghost"
-                  className="h-7 px-1.5 text-muted"
+                  className="size-10 px-0 text-muted sm:size-8"
                 >
-                  <X className="size-3.5" />
+                  <X className="size-4 sm:size-3.5" aria-label="Borrar" />
                 </ConfirmButton>
               </div>
             </li>

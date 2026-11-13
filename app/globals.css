@@ -1,37 +1,37 @@
-@import "tailwindcss";
+@import "../styles/globals.css";
 
+/*
+ * Tokens de la app sobre el sistema de Untitled UI (styles/theme.css). El modo oscuro de Untitled UI
+ * va por la clase `.dark-mode`, que el layout raíz pone según la preferencia del sistema.
+ */
 :root {
-  --background: #f6f7f9;
-  --surface: #ffffff;
-  --foreground: #18181b;
-  --muted: #71717a;
-  --border: #e4e4e7;
-  --accent: #0f766e;
-  --accent-soft: #ccfbf1;
-  --positive: #15803d;
-  --negative: #b91c1c;
+  color-scheme: light;
+  --background: var(--color-neutral-50);
+  --surface: var(--color-white);
+  --foreground: var(--color-text-primary);
+  --muted: var(--color-text-tertiary);
+  --border: var(--color-border-secondary);
+  --accent: var(--color-brand-700);
+  --accent-soft: var(--color-brand-50);
+  --positive: var(--color-text-success-primary);
+  --negative: var(--color-text-error-primary);
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
-  --grid: #e9e9e7;
+  --grid: var(--color-border-secondary);
+  /* Alto de la barra inferior en móvil (sin el área segura) */
+  --bottom-nav: 4rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b0c0e;
-    --surface: #141518;
-    --foreground: #ececee;
-    --muted: #9b9ba3;
-    --border: #26272c;
-    --accent: #2dd4bf;
-    --accent-soft: #134e4a;
-    --positive: #4ade80;
-    --negative: #f87171;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --grid: #2a2b2f;
-  }
+:root.dark-mode {
+  color-scheme: dark;
+  --background: var(--color-neutral-950);
+  --surface: var(--color-neutral-900);
+  --accent: var(--color-brand-400);
+  --accent-soft: color-mix(in srgb, var(--color-brand-500) 16%, transparent);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
 }
 
 @theme inline {
@@ -44,15 +44,106 @@
   --color-accent-soft: var(--accent-soft);
   --color-positive: var(--positive);
   --color-negative: var(--negative);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-body);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+  }
+
+  /* Los <details> usan su propio indicador */
+  summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  button:not(:disabled),
+  [role="button"],
+  select,
+  input[type="checkbox"],
+  input[type="color"],
+  label:has(> input[type="checkbox"]) {
+    cursor: pointer;
+  }
+
+  input[type="checkbox"] {
+    width: 1.125rem;
+    height: 1.125rem;
+    accent-color: var(--accent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Fila desplazable horizontalmente sin barra visible (pestañas en móvil) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Espacio para la barra inferior fija en móvil */
+.pb-bottom-nav {
+  padding-bottom: calc(var(--bottom-nav) + env(safe-area-inset-bottom) + 1.5rem);
+}
+@media (min-width: 768px) {
+  .pb-bottom-nav {
+    padding-bottom: 2rem;
+  }
+}
+
+/* Modal: hoja inferior en móvil, centrado desde sm */
+dialog.sheet[open] {
+  animation: sheet-up 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+dialog.sheet::backdrop {
+  animation: fade-in 0.2s ease-out;
+}
+@media (min-width: 640px) {
+  dialog.sheet[open] {
+    animation: pop-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }

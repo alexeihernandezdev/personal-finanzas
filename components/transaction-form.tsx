@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Calculator, Plus, Trash2 } from "lucide-react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { CurrencyConverter, type RatesDTO } from "@/components/currency-converter";
-import { Button, Field, Input, Select } from "@/components/ui";
+import { Button, Checkbox, Field, Input, Select } from "@/components/ui";
 import type { ActionState } from "@/lib/action";
 import { dec, Decimal, formatMoney, splitByPercent } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -134,19 +134,19 @@ export function TransactionForm({
       action={action}
       resetOnSuccess={!defaults}
       onSuccess={resetAll}
-      className="grid gap-4 sm:grid-cols-2"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2"
     >
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="splits" value={splitsJson} />
 
-      <div className="col-span-full grid grid-cols-2 gap-1 rounded-lg bg-background p-1">
+      <div className="col-span-full grid grid-cols-2 gap-1 rounded-xl bg-background p-1">
         {(["EXPENSE", "INCOME"] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setType(t)}
             className={cn(
-              "rounded-md py-1.5 text-sm font-medium transition",
+              "min-h-10 rounded-lg py-2 text-sm font-medium transition sm:min-h-0 sm:py-1.5 transition",
               type === t ? "bg-surface shadow-sm" : "text-muted",
               type === t && (t === "INCOME" ? "text-positive" : "text-negative"),
             )}
@@ -171,22 +171,23 @@ export function TransactionForm({
           inputMode="decimal"
           required
           placeholder="0,00"
+          className="h-14 text-2xl font-semibold tabular sm:h-11 sm:text-lg"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
         />
       </Field>
       {rates && (
-        <div className="col-span-full rounded-lg border border-border p-3">
+        <div className="col-span-full rounded-xl border border-border px-3 py-1">
           <button
             type="button"
             onClick={() => setCalcOn(!calcOn)}
-            className="flex items-center gap-2 text-sm font-medium"
+            className="flex min-h-10 w-full items-center gap-2 text-sm font-medium text-accent"
           >
             <Calculator className="size-4" />
             {calcOn ? "Ocultar calculadora de divisas" : "Calculadora de divisas"}
           </button>
           {calcOn && (
-            <div className="mt-3">
+            <div className="mt-1 mb-2">
               <CurrencyConverter
                 key={currency}
                 rates={rates}
@@ -215,12 +216,13 @@ export function TransactionForm({
         <Input name="description" placeholder="Opcional" defaultValue={defaults?.description} maxLength={200} />
       </Field>
 
-      <div className="col-span-full rounded-lg border border-border p-3">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input type="checkbox" checked={splitOn} onChange={(e) => setSplitOn(e.target.checked)} />
-          Asignar a negocios / dividir
-        </label>
-        {!splitOn && <p className="mt-1 text-xs text-muted">Si no lo marcas, el movimiento cuenta como Personal.</p>}
+      <div className="col-span-full rounded-xl border border-border p-3">
+        <Checkbox
+          checked={splitOn}
+          onCheckedChange={setSplitOn}
+          label="Asignar a negocios / dividir"
+          hint={splitOn ? undefined : "Si no lo marcas, el movimiento cuenta como Personal."}
+        />
         {splitOn && (
           <div className="mt-3 flex flex-col gap-2">
             <div className="flex gap-1 text-xs">
@@ -230,7 +232,7 @@ export function TransactionForm({
                   type="button"
                   onClick={() => setMode(m)}
                   className={cn(
-                    "rounded-md border px-2 py-1",
+                    "rounded-lg border px-3 py-1.5",
                     mode === m ? "border-accent text-accent" : "border-border text-muted",
                   )}
                 >
@@ -243,7 +245,7 @@ export function TransactionForm({
                 <Select
                   value={row.businessId}
                   onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, businessId: e.target.value } : r)))}
-                  className="flex-1"
+                  className="min-w-0 flex-1"
                 >
                   <option value={PERSONAL}>Personal</option>
                   {businesses.map((b) => (
@@ -253,20 +255,21 @@ export function TransactionForm({
                   ))}
                 </Select>
                 <Input
-                  className="w-28"
+                  className="w-24 sm:w-28"
                   inputMode="decimal"
                   value={row.value}
                   onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
                   placeholder={mode === "percent" ? "%" : "0,00"}
                 />
-                <span className="w-28 text-right text-xs text-muted tabular">
+                <span className="hidden w-28 text-right text-xs text-muted tabular sm:block">
                   {mode === "percent" ? formatMoney(computed.amounts[i] ?? 0, currency) : ""}
                 </span>
                 <button
                   type="button"
                   onClick={() => setRows(rows.filter((_, j) => j !== i))}
                   disabled={rows.length === 1}
-                  className="rounded-md p-1.5 text-muted hover:text-negative disabled:opacity-30"
+                  aria-label="Quitar parte"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted hover:text-negative disabled:opacity-30 sm:size-8"
                 >
                   <Trash2 className="size-4" />
                 </button>
@@ -276,7 +279,7 @@ export function TransactionForm({
               <Button
                 type="button"
                 variant="ghost"
-                className="h-8 text-xs"
+                className="h-10 text-sm sm:h-8 sm:text-xs"
                 onClick={() => setRows([...rows, { businessId: PERSONAL, value: "" }])}
               >
                 <Plus className="size-3.5" /> Agregar parte
@@ -296,7 +299,7 @@ export function TransactionForm({
         )}
       </div>
 
-      <div className="col-span-full flex flex-col gap-2 rounded-lg border border-border p-3">
+      <div className="col-span-full flex flex-col gap-2 rounded-xl border border-border p-3">
         <Field label={type === "INCOME" ? "Va al apartado" : "Sale del apartado"}>
           <Select name="pocketId" value={pocketId} onChange={(e) => setPocketId(e.target.value)}>
             <option value={AUTO_POCKET}>
@@ -321,15 +324,12 @@ export function TransactionForm({
         )}
         {type === "INCOME" && receivers.length > 0 && (
           <>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                name="distribute"
-                defaultChecked={defaults?.distribute ?? true}
-                key={defaults ? "edit" : "new"}
-              />
-              Repartir según el presupuesto
-            </label>
+            <Checkbox
+              name="distribute"
+              defaultChecked={defaults?.distribute ?? true}
+              key={defaults ? "edit" : "new"}
+              label="Repartir según el presupuesto"
+            />
             <ul className="flex flex-col gap-1 text-xs text-muted">
               {receivers.map((r) => (
                 <li key={r.name}>
@@ -351,7 +351,7 @@ export function TransactionForm({
       </div>
 
       <div className="col-span-full">
-        <SubmitButton>{submitLabel}</SubmitButton>
+        <SubmitButton className="w-full sm:w-auto sm:min-w-40">{submitLabel}</SubmitButton>
       </div>
     </ActionForm>
   );

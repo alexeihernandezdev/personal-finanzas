@@ -32,19 +32,21 @@ export function Modal({
       ref={ref}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
-      className="m-auto w-[calc(100%-2rem)] max-w-sm rounded-xl border border-border bg-surface p-0 text-foreground shadow-xl backdrop:bg-black/60"
+      // Hoja inferior en móvil (al alcance del pulgar); centrado desde sm
+      className="sheet mx-0 mt-auto mb-0 max-h-[90dvh] w-full max-w-none rounded-t-3xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/50 sm:m-auto sm:w-[calc(100%-2rem)] sm:max-w-sm sm:rounded-2xl"
     >
       {open && (
-        <div className="p-5">
+        <div className="p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] sm:pb-5">
+          <div className="mx-auto -mt-2 mb-3 h-1 w-10 rounded-full bg-border sm:hidden" aria-hidden />
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="font-semibold">{title}</h2>
+            <h2 className="text-lg font-semibold sm:text-base">{title}</h2>
             <button
               type="button"
               onClick={onClose}
               aria-label="Cerrar"
-              className="rounded-lg p-1 text-muted transition hover:bg-background hover:text-foreground"
+              className="-mr-2 flex size-10 items-center justify-center rounded-full text-muted transition hover:bg-background hover:text-foreground sm:size-8"
             >
-              <X className="size-4" />
+              <X className="size-5 sm:size-4" />
             </button>
           </div>
           {children}

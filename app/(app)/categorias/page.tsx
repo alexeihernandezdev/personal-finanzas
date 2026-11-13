@@ -14,8 +14,8 @@ async function CategoriasPageContent() {
   return (
     <>
       <PageHeader title="Categorías" description="Organiza tus ingresos y gastos" />
-      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
-        <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           {(["INCOME", "EXPENSE"] as const).map((kind) => (
             <div key={kind}>
               <SectionTitle>{kind === "INCOME" ? "Ingresos" : "Gastos"}</SectionTitle>

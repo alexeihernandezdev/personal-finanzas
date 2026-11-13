@@ -18,7 +18,7 @@ async function NegociosPageContent() {
         title="Negocios"
         description="Emprendimientos a los que puedes asignar o repartir ingresos y gastos"
       />
-      <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
         <div>
           {businesses.length === 0 ? (
             <EmptyState>

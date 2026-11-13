@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
-import { CheckCircle2, Circle, Repeat } from "lucide-react";
+import { Check, CheckCircle2, Circle, Repeat } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { MonthNav, parseMonthParam } from "@/components/month-nav";
 import { PocketPicker } from "@/components/pocket-picker";
 import { CURRENCIES } from "@/components/wallet-fields";
-import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
+import { Amount, Badge, buttonClass, Card, Checkbox, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
 import { FIXED_RESERVE, FREQUENCIES, nextDueMonth } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { prisma } from "@/lib/db";
@@ -73,30 +73,30 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
         description="Pagos que se repiten cada mes, trimestre, semestre o año"
         actions={<MonthNav month={month} basePath="/gastos-fijos" query={`negocio=${currentTab.key}`} />}
       />
-      <nav className="mb-6 flex flex-wrap gap-2" aria-label="Dueño de los gastos fijos">
+      <nav className="no-scrollbar -mx-4 mb-5 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:mb-6 sm:flex-wrap sm:px-0" aria-label="Dueño de los gastos fijos">
         {tabs.map((t) => (
           <Link
             key={t.key}
             href={`/gastos-fijos?negocio=${t.key}&mes=${month}`}
             className={cn(
-              "rounded-lg px-3 py-1.5 text-sm",
-              currentTab.key === t.key ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-surface",
+              "flex h-10 shrink-0 items-center rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
+              currentTab.key === t.key ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
             )}
           >
             {t.name}
           </Link>
         ))}
       </nav>
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Card>
           <p className="text-sm text-muted">Total del mes</p>
-          <p className="text-2xl font-semibold tabular">{formatMoney(total, user.displayCurrency)}</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(total, user.displayCurrency)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted">Pendiente por pagar</p>
-          <p className="text-2xl font-semibold tabular text-negative">{formatMoney(pending, user.displayCurrency)}</p>
+          <p className="text-sm text-muted">Pendiente</p>
+          <p className="mt-1 truncate text-xl font-semibold tabular text-negative sm:text-2xl">{formatMoney(pending, user.displayCurrency)}</p>
         </Card>
-        <Card>
+        <Card className="col-span-2 sm:col-span-1">
           <p className="text-sm text-muted">Reservado para los próximos pagos</p>
           <p className="text-2xl font-semibold tabular">
             {formatMoney(reserveHave, user.displayCurrency)}
@@ -116,23 +116,23 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
         </Card>
       </div>
       {withoutPocket > 0 && (
-        <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg bg-background px-4 py-3 text-sm text-muted">
-          <span className="flex-1">
+        <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-accent/20 bg-accent-soft/50 p-4 text-sm text-muted sm:flex-row sm:items-center">
+          <span className="flex-1 text-pretty">
             {withoutPocket === 1 ? "1 gasto fijo se paga" : `${withoutPocket} gastos fijos se pagan`} desde la Caja. Pásalos a un
             apartado de reserva para que su dinero no se mezcle con el libre.
           </span>
-          <ConfirmButton action={assignFixedReserveToAll.bind(null, businessId)} variant="secondary" className="h-8 text-xs">
+          <ConfirmButton action={assignFixedReserveToAll.bind(null, businessId)} variant="secondary" className="w-full sm:h-8 sm:w-auto sm:text-xs">
             Usar &quot;Gastos fijos&quot; para todos
           </ConfirmButton>
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div>
           {items.length === 0 ? (
             <EmptyState>No tienes gastos fijos. Agrega alquiler, internet, suscripciones…</EmptyState>
           ) : (
-            <Card className="p-0">
+            <Card className="p-0 sm:p-0">
               <ul className="divide-y divide-border">
                 {items.map((r) => {
                   const overdue = r.active && r.due && !r.paid && toISODate(r.dueDate) < today;
@@ -140,16 +140,19 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                   // La reserva cubre el próximo pago pendiente: solo se muestra en el mes en curso
                   const cover = r.active && !r.paid && isCurrentMonth ? coverage.get(r.id) : undefined;
                   return (
-                    <li key={r.id} className={cn("relative px-4 py-3", !r.active && "opacity-50")}>
-                      <div className="flex flex-wrap items-center gap-3">
+                    <li key={r.id} className={cn("relative px-4 py-4", !r.active && "opacity-50")}>
+                      <div className="flex items-start gap-3">
                         {r.paid ? (
-                          <CheckCircle2 className="size-5 text-positive" />
+                          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-positive" />
                         ) : (
-                          <Circle className={cn("size-5", overdue ? "text-negative" : "text-muted")} />
+                          <Circle className={cn("mt-0.5 size-5 shrink-0", overdue ? "text-negative" : "text-muted")} />
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium">{r.name}</p>
-                          <p className="text-xs text-muted">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="min-w-0 font-medium">{r.name}</p>
+                            <Amount className="font-semibold" value={formatMoney(r.amount, r.currencyCode)} />
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted">
                             {r.intervalMonths > 1 && `${frequency?.label ?? `Cada ${r.intervalMonths} meses`} · `}
                             Día {r.dayOfMonth} · {formatDate(r.dueDate, { day: "2-digit", month: "short", ...(r.due ? {} : { year: "numeric" }) })}
                             {r.category && ` · ${r.category.name}`}
@@ -157,25 +160,28 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                             {r.wallet && ` · ${r.wallet.name}`}
                             {` · de ${r.pocket && !r.pocket.archived ? r.pocket.name : "la Caja"}`}
                           </p>
+                          {(overdue || cover || r.autoPay || !r.active) && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {overdue && <Badge color="error">Vencido</Badge>}
+                              {cover &&
+                                (cover.missing.gt(0) ? (
+                                  <Badge color="brand">
+                                    Faltan {formatMoney(cover.missing, cover.pocket?.currencyCode ?? r.currencyCode)}
+                                  </Badge>
+                                ) : (
+                                  <Badge color="success">Cubierto</Badge>
+                                ))}
+                              {r.autoPay && (
+                                <Badge>
+                                  <Repeat className="size-3" /> Automático
+                                </Badge>
+                              )}
+                              {!r.active && <Badge>Pausado</Badge>}
+                            </div>
+                          )}
                         </div>
-                        {overdue && <Badge className="bg-negative/10 text-negative">Vencido</Badge>}
-                        {cover &&
-                          (cover.missing.gt(0) ? (
-                            <Badge className="bg-accent-soft text-accent">
-                              Faltan {formatMoney(cover.missing, cover.pocket?.currencyCode ?? r.currencyCode)}
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-positive/10 text-positive">Cubierto</Badge>
-                          ))}
-                        {r.autoPay && (
-                          <Badge className="gap-1">
-                            <Repeat className="size-3" /> Automático
-                          </Badge>
-                        )}
-                        {!r.active && <Badge>Pausado</Badge>}
-                        <Amount className="font-medium" value={formatMoney(r.amount, r.currencyCode)} />
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2 pl-8">
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:pl-8">
                         {r.paid && r.paidMark && !r.payment ? (
                           <>
                             <span className="text-xs text-positive">
@@ -185,7 +191,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                               action={unpayRecurring.bind(null, r.id, month)}
                               confirm="¿Volver a marcar este gasto como pendiente?"
                               variant="ghost"
-                              className="h-8 text-xs text-muted"
+                              className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs"
                             >
                               Deshacer
                             </ConfirmButton>
@@ -208,7 +214,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                   : "¿Deshacer este pago? Se eliminará el movimiento registrado."
                               }
                               variant="ghost"
-                              className="h-8 text-xs text-muted"
+                              className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs"
                             >
                               Deshacer
                             </ConfirmButton>
@@ -225,19 +231,24 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                               {r.wallet && ` de ${r.wallet.name}`}
                             </span>
                           ) : (
+                            <details className="group/pay w-full sm:w-auto">
+                              <summary className={buttonClass("secondary", "w-full sm:h-8 sm:w-auto sm:text-xs group-open/pay:hidden")}>
+                                <Check className="size-4 sm:size-3.5" />
+                                Registrar pago
+                              </summary>
                             <ActionForm
                               action={payRecurring.bind(null, r.id, month)}
-                              className="flex flex-wrap items-center gap-2"
+                              className="grid grid-cols-2 gap-2 rounded-xl bg-background p-2.5 sm:flex sm:flex-wrap sm:items-center"
                             >
-                              <Select name="walletId" defaultValue={r.walletId ?? wallets[0]?.id} className="h-8 w-40 text-xs">
+                              <Select name="walletId" defaultValue={r.walletId ?? wallets[0]?.id} aria-label="Cuenta" className="col-span-2 sm:h-8 sm:w-40 sm:text-xs">
                                 {wallets.map((w) => (
                                   <option key={w.id} value={w.id}>
                                     {w.name} ({w.currencyCode})
                                   </option>
                                 ))}
                               </Select>
-                              <Input name="amount" defaultValue={r.amount.toFixed(2)} inputMode="decimal" className="h-8 w-24 text-xs" />
-                              <Select name="amountCurrency" defaultValue={r.currencyCode} className="h-8 w-24 text-xs">
+                              <Input name="amount" defaultValue={r.amount.toFixed(2)} inputMode="decimal" aria-label="Monto" className="sm:h-8 sm:w-24 sm:text-xs" />
+                              <Select name="amountCurrency" defaultValue={r.currencyCode} aria-label="Divisa" className="sm:h-8 sm:w-24 sm:text-xs">
                                 {CURRENCIES.map((c) => (
                                   <option key={c.value} value={c.value}>
                                     {c.value}
@@ -249,30 +260,31 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                 type="date"
                                 defaultValue={month === currentMonth() ? today : toISODate(r.dueDate)}
                                 title="Fecha en que pagaste; se usa la tasa BCV de ese día"
-                                className="h-8 w-36 text-xs"
+                                aria-label="Fecha de pago"
+                                className="col-span-2 sm:h-8 sm:w-36 sm:text-xs"
                               />
                               <PocketPicker
                                 pockets={pockets}
                                 direction="out"
                                 defaultValue={r.pocket && !r.pocket.archived ? r.pocket.id : "auto"}
-                                className="h-8 w-44 text-xs"
+                                className="col-span-2 sm:h-8 sm:w-44 sm:text-xs"
                               />
-                              <label
-                                className="flex items-center gap-1.5 text-xs text-muted"
+                              <Checkbox
+                                name="noMovement"
+                                label="Sin movimiento"
                                 title="Lo marca como pagado sin registrar un gasto en la cuenta (por ejemplo, si ya lo registraste aparte)"
-                              >
-                                <input type="checkbox" name="noMovement" />
-                                Sin movimiento
-                              </label>
-                              <SubmitButton variant="secondary" className="h-8 text-xs">
+                                className="col-span-2"
+                              />
+                              <SubmitButton className="col-span-2 sm:h-8 sm:text-xs">
                                 Marcar pagado
                               </SubmitButton>
                             </ActionForm>
+                            </details>
                           ))
                         )}
-                        <div className="ml-auto flex">
+                        <div className="-mx-2 flex flex-wrap items-center sm:mx-0 sm:ml-auto">
                           <details className="group">
-                            <summary className="flex h-8 cursor-pointer list-none items-center px-3 text-xs text-muted hover:text-foreground">
+                            <summary className="flex h-10 items-center rounded-lg px-3 text-sm text-muted hover:bg-background hover:text-foreground sm:h-8 sm:text-xs">
                               Editar
                             </summary>
                             <div className="absolute left-4 right-4 z-10 mt-2 rounded-xl border border-border bg-surface p-4 shadow-lg sm:left-auto sm:w-80">
@@ -290,18 +302,18 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                             </div>
                           </details>
                           {(r.autoPay || r.walletId) && (
-                            <ConfirmButton action={toggleAutoPay.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                            <ConfirmButton action={toggleAutoPay.bind(null, r.id)} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
                               {r.autoPay ? "Hacer manual" : "Hacer automático"}
                             </ConfirmButton>
                           )}
-                          <ConfirmButton action={toggleRecurring.bind(null, r.id)} variant="ghost" className="h-8 text-xs text-muted">
+                          <ConfirmButton action={toggleRecurring.bind(null, r.id)} variant="ghost" className="h-10 px-3 text-sm text-muted sm:h-8 sm:text-xs">
                             {r.active ? "Pausar" : "Activar"}
                           </ConfirmButton>
                           <ConfirmButton
                             action={deleteRecurring.bind(null, r.id)}
                             confirm="¿Eliminar este gasto fijo? Los pagos ya registrados se conservan."
-                            variant="ghost"
-                            className="h-8 text-xs"
+                            variant="danger"
+                            className="h-10 px-3 text-sm sm:h-8 sm:text-xs"
                           >
                             Eliminar
                           </ConfirmButton>
@@ -454,15 +466,12 @@ function RecurringFields({
         </Select>
         <span className="text-xs text-muted">Al entrar dinero a la Caja, este apartado se llena primero para cubrir el próximo pago.</span>
       </Field>
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" name="autoPay" className="mt-0.5" defaultChecked={defaults?.autoPay} />
-        <span>
-          Se cobra automáticamente
-          <span className="block text-xs text-muted">
-            Se registra solo el día del vencimiento en la cuenta habitual, con la tasa BCV de ese día.
-          </span>
-        </span>
-      </label>
+      <Checkbox
+        name="autoPay"
+        defaultChecked={defaults?.autoPay}
+        label="Se cobra automáticamente"
+        hint="Se registra solo el día del vencimiento en la cuenta habitual, con la tasa BCV de ese día."
+      />
     </>
   );
 }

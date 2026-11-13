@@ -60,7 +60,7 @@ export function CurrencyConverter({
   const needsRate = from === "VES" || to === "VES";
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <Field label="Monto a convertir">
         <Input inputMode="decimal" placeholder="0,00" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
@@ -128,7 +128,7 @@ export function CurrencyConverter({
           )}
         </p>
         {onUse && result && (
-          <Button type="button" variant="secondary" className="h-8 text-xs" onClick={() => onUse(result!)}>
+          <Button type="button" variant="secondary" className="h-10 px-3 text-sm sm:h-8 sm:text-xs" onClick={() => onUse(result!)}>
             Usar como monto
           </Button>
         )}

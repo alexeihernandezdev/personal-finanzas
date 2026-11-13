@@ -44,7 +44,7 @@ async function ReportesPageContent({ searchParams }: PageProps<"/reportes">) {
         description="Ingresos y gastos (sin transferencias ni préstamos)"
         actions={<MonthNav month={month} basePath="/reportes" />}
       />
-      <div className="mb-6 grid gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card>
           <p className="text-sm text-muted">Ingresos</p>
           <p className="text-2xl font-semibold tabular">{fmt(summary.income)}</p>
@@ -66,7 +66,7 @@ async function ReportesPageContent({ searchParams }: PageProps<"/reportes">) {
         <MonthlyTrendChart data={trend} currency={cur} />
       </Card>
 
-      <div className="mb-6 grid gap-6 lg:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
           <SectionTitle>Gastos por categoría</SectionTitle>
           <Card>{expenseCats.length ? <CategoryBars data={expenseCats} currency={cur} /> : <EmptyState>Sin gastos este mes</EmptyState>}</Card>

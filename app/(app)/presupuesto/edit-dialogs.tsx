@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { Modal } from "@/components/modal";
 import { Field, Input, Select } from "@/components/ui";
@@ -14,9 +14,9 @@ function EditButton({ label, onClick }: { label: string; onClick: () => void }) 
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="rounded-lg p-1.5 text-muted transition hover:bg-background hover:text-foreground"
+      className="flex size-10 items-center justify-center rounded-lg text-muted transition hover:bg-background hover:text-foreground sm:size-8"
     >
-      <Pencil className="size-3.5" />
+      <Pencil className="size-4 sm:size-3.5" />
     </button>
   );
 }
@@ -97,10 +97,13 @@ export function EditBucketButton({
   bucket,
   pockets,
   owners,
+  orderControls,
 }: {
   bucket: { id: string; name: string; percent: string; color: string; pocketId: string | null };
   pockets: PocketOption[];
   owners: OwnerOption[];
+  /** Botones para subir/bajar la partida; en móvil se muestran dentro del diálogo */
+  orderControls?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -109,6 +112,12 @@ export function EditBucketButton({
     <>
       <EditButton label={`Editar ${bucket.name}`} onClick={() => setOpen(true)} />
       <Modal open={open} onClose={close} title="Editar partida">
+        {orderControls && (
+          <div className="mb-4 flex items-center justify-between rounded-xl bg-background px-3 py-1.5 text-sm sm:hidden">
+            <span className="text-muted">Orden</span>
+            <div className="flex">{orderControls}</div>
+          </div>
+        )}
         <ActionForm
           action={updateBudgetBucket.bind(null, bucket.id)}
           resetOnSuccess={false}

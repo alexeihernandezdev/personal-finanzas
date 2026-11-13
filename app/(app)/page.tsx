@@ -1,8 +1,19 @@
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, CheckCircle2, ChevronRight, Plus, TrendingUp } from "lucide-react";
 import { TransactionList } from "@/components/transaction-list";
-import { Amount, Badge, buttonClass, Card, EmptyState, PageHeader, SectionTitle } from "@/components/ui";
+import {
+  Amount,
+  Badge,
+  buttonClass,
+  Card,
+  CardFooterLink,
+  EmptyState,
+  PageHeader,
+  SectionHeader,
+  SectionTitle,
+} from "@/components/ui";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
 import { formatPercent } from "@/lib/budget";
@@ -62,98 +73,123 @@ async function DashboardPageContent() {
         actions={
           <>
             <Link href="/transferencias" className={buttonClass("secondary")}>
+              <ArrowLeftRight className="size-4" />
               Transferir
             </Link>
             <Link href="/movimientos/nuevo" className={buttonClass()}>
+              <Plus className="size-4" />
               Nuevo movimiento
             </Link>
           </>
         }
       />
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="sm:col-span-2 lg:col-span-1">
-          <p className="text-sm text-muted">Patrimonio neto</p>
-          <p className="mt-1 text-3xl font-semibold">
-            <Amount value={formatMoney(netWorth, cur)} />
-          </p>
-          <div className="mt-2 space-y-0.5 text-xs tabular text-muted">
-            <p className="flex justify-between">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Card className="relative col-span-2 overflow-hidden border-transparent bg-gradient-to-br from-teal-700 to-teal-900 text-white lg:col-span-1 dark:from-teal-800 dark:to-[#0b2b29]">
+          <div className="pointer-events-none absolute -top-10 -right-10 size-36 rounded-full bg-white/10 blur-2xl" aria-hidden />
+          <p className="text-sm text-white/75">Patrimonio neto</p>
+          <p className="mt-1 truncate text-3xl font-semibold tracking-tight tabular">{formatMoney(netWorth, cur)}</p>
+          <div className="mt-3 space-y-1 text-xs tabular text-white/75">
+            <p className="flex justify-between gap-2">
               <span>En cuentas</span>
-              <span>{formatMoney(walletTotal, cur)}</span>
+              <span className="text-white">{formatMoney(walletTotal, cur)}</span>
             </p>
-            <p className="flex justify-between">
+            <p className="flex justify-between gap-2">
               <span>Por cobrar</span>
-              <span>+ {formatMoney(receivableTotal, cur)}</span>
+              <span className="text-white">+ {formatMoney(receivableTotal, cur)}</span>
             </p>
-            <p className="flex justify-between">
+            <p className="flex justify-between gap-2">
               <span>Deudas</span>
-              <span className={debtTotal.gt(0) ? "text-negative" : undefined}>− {formatMoney(debtTotal, cur)}</span>
+              <span className={debtTotal.gt(0) ? "text-rose-200" : "text-white"}>− {formatMoney(debtTotal, cur)}</span>
             </p>
             {money.reserved.gt(0) && (
-              <p className="flex justify-between border-t border-border pt-1 font-medium text-foreground">
-                <Link href="/apartados" className="hover:underline">
+              <p className="flex justify-between gap-2 border-t border-white/15 pt-1.5 text-sm font-medium text-white">
+                <Link href="/apartados" className="underline-offset-2 hover:underline">
                   Disponible para usar
                 </Link>
-                <Amount value={formatMoney(money.available, cur)} />
+                <span>{formatMoney(money.available, cur)}</span>
               </p>
             )}
           </div>
         </Card>
-        <Card>
-          <p className="text-sm text-muted">Ingresos del mes</p>
-          <p className="mt-1 text-2xl font-semibold tabular text-positive">{formatMoney(usdToDisplay(summary.income), cur)}</p>
+        <Card className="min-w-0">
+          <p className="flex items-center gap-1.5 text-sm text-muted">
+            <span className="flex size-6 items-center justify-center rounded-full bg-positive/10 text-positive">
+              <ArrowDownLeft className="size-3.5" />
+            </span>
+            Ingresos
+          </p>
+          <p className="mt-2 truncate text-xl font-semibold tabular text-positive sm:text-2xl">
+            {formatMoney(usdToDisplay(summary.income), cur)}
+          </p>
         </Card>
-        <Card>
-          <p className="text-sm text-muted">Gastos del mes</p>
-          <p className="mt-1 text-2xl font-semibold tabular text-negative">{formatMoney(usdToDisplay(summary.expense), cur)}</p>
+        <Card className="min-w-0">
+          <p className="flex items-center gap-1.5 text-sm text-muted">
+            <span className="flex size-6 items-center justify-center rounded-full bg-negative/10 text-negative">
+              <ArrowUpRight className="size-3.5" />
+            </span>
+            Gastos
+          </p>
+          <p className="mt-2 truncate text-xl font-semibold tabular text-negative sm:text-2xl">
+            {formatMoney(usdToDisplay(summary.expense), cur)}
+          </p>
         </Card>
-        <Card className="sm:col-span-2 lg:col-span-1">
-          <p className="text-sm text-muted">Tasas (Bs. por $)</p>
-          <div className="mt-1 space-y-0.5 text-sm tabular">
-            <p className="flex justify-between">
+        <Link
+          href="/tasas"
+          className="col-span-2 flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3 shadow-[0_1px_2px_rgb(0_0_0/0.04)] transition-colors hover:bg-background lg:col-span-1 lg:flex-col lg:items-stretch lg:p-5"
+        >
+          <span className="flex items-center gap-2 text-sm text-muted">
+            <TrendingUp className="size-4" />
+            <span className="lg:hidden">Bs/$</span>
+            <span className="hidden lg:inline">Tasas (Bs. por $)</span>
+          </span>
+          <span className="flex flex-1 justify-end gap-4 text-sm tabular lg:flex-col lg:gap-0.5">
+            <span className="flex gap-1.5 lg:justify-between">
               <span className="text-muted">BCV</span>
-              <span className="font-medium">{rates.bcv ? rates.bcv.toFixed(2) : "—"}</span>
-            </p>
-            <p className="flex justify-between">
+              <span className="font-semibold">{rates.bcv ? rates.bcv.toFixed(2) : "—"}</span>
+            </span>
+            <span className="flex gap-1.5 lg:justify-between">
               <span className="text-muted">Binance</span>
-              <span className="font-medium">{rates.binance ? rates.binance.toFixed(2) : "—"}</span>
-            </p>
-          </div>
-          <Link href="/tasas" className="mt-1 inline-block text-xs text-accent hover:underline">
-            Ver histórico
-          </Link>
-        </Card>
+              <span className="font-semibold">{rates.binance ? rates.binance.toFixed(2) : "—"}</span>
+            </span>
+          </span>
+          <ChevronRight className="size-4 text-muted lg:hidden" />
+        </Link>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-6">
           <section>
-            <div className="flex items-center justify-between">
-              <SectionTitle>Cuentas</SectionTitle>
-              <Link href="/cuentas" className="mb-3 text-xs text-accent hover:underline">
-                Administrar
-              </Link>
-            </div>
+            <SectionHeader title="Cuentas" href="/cuentas" linkLabel="Administrar" />
             {wallets.length === 0 ? (
               <EmptyState>
                 Empieza creando tus cuentas (banco, PayPal, Binance, efectivo…).{" "}
-                <Link href="/cuentas" className="text-accent hover:underline">
+                <Link href="/cuentas" className="font-medium text-accent hover:underline">
                   Crear cuenta
                 </Link>
               </EmptyState>
             ) : (
-              <Card className="p-0">
+              <Card className="p-0 sm:p-0">
                 <ul className="divide-y divide-border">
                   {wallets.map((w) => (
                     <li key={w.id}>
-                      <Link href={`/cuentas/${w.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-background">
-                        <span className="size-2.5 rounded-full" style={{ background: w.color }} />
-                        <span className="flex-1 text-sm font-medium">{w.name}</span>
-                        <Badge>{w.currencyCode}</Badge>
-                        <span className="w-36 text-right">
-                          <Amount className="block text-sm font-medium" value={formatMoney(w.balance, w.currencyCode)} />
+                      <Link
+                        href={`/cuentas/${w.id}`}
+                        className="flex min-h-14 items-center gap-3 px-4 py-2.5 transition-colors hover:bg-background"
+                      >
+                        <span
+                          className="flex size-9 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
+                          style={{ background: w.color }}
+                          aria-hidden
+                        >
+                          {w.name.charAt(0).toUpperCase()}
                         </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{w.name}</span>
+                          <span className="block text-xs text-muted">{w.currencyCode}</span>
+                        </span>
+                        <Amount className="text-sm font-semibold" value={formatMoney(w.balance, w.currencyCode)} />
+                        <ChevronRight className="size-4 shrink-0 text-muted" />
                       </Link>
                     </li>
                   ))}
@@ -162,20 +198,15 @@ async function DashboardPageContent() {
             )}
           </section>
           <section>
-            <div className="flex items-center justify-between">
-              <SectionTitle>Últimos movimientos</SectionTitle>
-              <Link href="/movimientos" className="mb-3 text-xs text-accent hover:underline">
-                Ver todos
-              </Link>
-            </div>
+            <SectionHeader title="Últimos movimientos" href="/movimientos" linkLabel="Ver todos" />
             <TransactionList transactions={recent} />
           </section>
         </div>
 
-        <div className="flex flex-col gap-6">
+        <div className="flex min-w-0 flex-col gap-6">
           <section>
             <SectionTitle>Presupuesto</SectionTitle>
-            <Card className="p-0">
+            <Card className="p-0 sm:p-0">
               {budget.income.isZero() ? (
                 <p className="p-4 text-sm text-muted">Registra tus ingresos fijos para ver cómo se reparten.</p>
               ) : (
@@ -190,8 +221,8 @@ async function DashboardPageContent() {
                   </li>
                   {budget.buckets.map((b) => (
                     <li key={b.id} className="flex items-center gap-2 px-4 py-2.5">
-                      <span className="size-2.5 rounded-full" style={{ background: b.color }} />
-                      <span className="flex-1">{b.name}</span>
+                      <span className="size-2.5 shrink-0 rounded-full" style={{ background: b.color }} />
+                      <span className="min-w-0 flex-1 truncate">{b.name}</span>
                       <span className="tabular">{formatPercent(b.percent)}</span>
                     </li>
                   ))}
@@ -203,33 +234,31 @@ async function DashboardPageContent() {
                   </li>
                 </ul>
               )}
-              <Link href="/presupuesto" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
-                Ir a presupuesto
-              </Link>
+              <CardFooterLink href="/presupuesto">Ir a presupuesto</CardFooterLink>
             </Card>
           </section>
           {pinnedPockets.length > 0 && (
             <section>
               <SectionTitle>Apartados</SectionTitle>
-              <Card className="p-0">
+              <Card className="p-0 sm:p-0">
                 <ul className="divide-y divide-border text-sm">
                   {pinnedPockets.map((p) => {
                     const target = p.targetAmount ? new Decimal(p.targetAmount.toString()) : null;
                     const pct = target && target.gt(0) ? Math.min(100, p.balance.div(target).mul(100).toNumber()) : null;
                     return (
-                      <li key={p.id} className="px-4 py-2.5">
+                      <li key={p.id} className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <span className="size-2.5 rounded-full" style={{ background: p.color }} />
-                          <span className="flex-1 truncate">
+                          <span className="size-2.5 shrink-0 rounded-full" style={{ background: p.color }} />
+                          <span className="min-w-0 flex-1 truncate">
                             {p.name}
                             {p.business && <span className="text-xs text-muted"> · {p.business.name}</span>}
                           </span>
                           <Amount className="tabular font-medium" value={formatMoney(p.balance, p.currencyCode)} />
                         </div>
                         {pct !== null && (
-                          <div className="mt-1.5 flex items-center gap-2 pl-[18px]">
+                          <div className="mt-2 flex items-center gap-2 pl-[18px]">
                             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-background">
-                              <div className="h-full" style={{ width: `${pct}%`, background: p.color }} />
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: p.color }} />
                             </div>
                             <span className="text-xs tabular text-muted">
                               {pct.toFixed(0)}% de {formatMoney(target!, p.currencyCode)}
@@ -240,91 +269,92 @@ async function DashboardPageContent() {
                     );
                   })}
                 </ul>
-                <Link href="/apartados" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
-                  Ir a apartados
-                </Link>
+                <CardFooterLink href="/apartados">Ir a apartados</CardFooterLink>
               </Card>
             </section>
           )}
           <section>
             <SectionTitle>Gastos fijos pendientes</SectionTitle>
-            <Card className="p-0">
+            <Card className="p-0 sm:p-0">
               {pendingRecurring.length === 0 ? (
-                <p className="p-4 text-sm text-muted">
-                  {recurring.length ? "Todo pagado este mes 🎉" : "No tienes gastos fijos."}
+                <p className="flex items-center gap-2 p-4 text-sm text-muted">
+                  {recurring.length ? (
+                    <>
+                      <CheckCircle2 className="size-4 text-positive" /> Todo pagado este mes
+                    </>
+                  ) : (
+                    "No tienes gastos fijos."
+                  )}
                 </p>
               ) : (
                 <ul className="divide-y divide-border">
-                  {pendingRecurring.map((r) => (
-                    <li key={r.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                      <div>
-                        <p className="font-medium">{r.name}</p>
-                        <p className={toISODate(r.dueDate) < today ? "text-xs text-negative" : "text-xs text-muted"}>
-                          {toISODate(r.dueDate) < today ? "Venció" : "Vence"} el {formatDate(r.dueDate, { day: "2-digit", month: "short" })}
-                        </p>
-                      </div>
-                      <span className="tabular">{formatMoney(r.amount, r.currencyCode)}</span>
-                    </li>
-                  ))}
+                  {pendingRecurring.map((r) => {
+                    const overdue = toISODate(r.dueDate) < today;
+                    return (
+                      <li key={r.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{r.name}</p>
+                          <p className={overdue ? "text-xs text-negative" : "text-xs text-muted"}>
+                            {overdue ? "Venció" : "Vence"} el {formatDate(r.dueDate, { day: "2-digit", month: "short" })}
+                          </p>
+                        </div>
+                        <span className="tabular font-medium">{formatMoney(r.amount, r.currencyCode)}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
-              <Link href="/gastos-fijos" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
-                Ir a gastos fijos
-              </Link>
+              <CardFooterLink href="/gastos-fijos">Ir a gastos fijos</CardFooterLink>
             </Card>
           </section>
           <section>
             <SectionTitle>Por cobrar</SectionTitle>
-            <Card className="p-0">
+            <Card className="p-0 sm:p-0">
               {receivables.length === 0 ? (
                 <p className="p-4 text-sm text-muted">Nadie te debe nada.</p>
               ) : (
                 <ul className="divide-y divide-border">
                   {receivables.slice(0, 6).map((r) => (
                     <li key={r.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                      <div>
-                        <p className="font-medium">
-                          {r.counterparty}
-                          {r.kind === "LOAN_GIVEN" && <Badge className="ml-2">Préstamo</Badge>}
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 font-medium">
+                          <span className="truncate">{r.counterparty}</span>
+                          {r.kind === "LOAN_GIVEN" && <Badge>Préstamo</Badge>}
                         </p>
                         <p className="text-xs text-muted">{r.expectedDate ? formatDate(r.expectedDate) : "Sin fecha"}</p>
                       </div>
-                      <span className="tabular">{formatMoney(r.remaining, r.currencyCode)}</span>
+                      <span className="tabular font-medium">{formatMoney(r.remaining, r.currencyCode)}</span>
                     </li>
                   ))}
                 </ul>
               )}
-              <Link href="/por-cobrar" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
-                Ir a por cobrar
-              </Link>
+              <CardFooterLink href="/por-cobrar">Ir a por cobrar</CardFooterLink>
             </Card>
           </section>
           <section>
             <SectionTitle>Deudas</SectionTitle>
-            <Card className="p-0">
+            <Card className="p-0 sm:p-0">
               {debts.length === 0 ? (
                 <p className="p-4 text-sm text-muted">No debes nada.</p>
               ) : (
                 <ul className="divide-y divide-border">
                   {debts.slice(0, 6).map((d) => (
                     <li key={d.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                      <div>
-                        <p className="font-medium">
-                          {d.counterparty}
-                          {d.kind === "LOAN_RECEIVED" && <Badge className="ml-2">Préstamo</Badge>}
+                      <div className="min-w-0">
+                        <p className="flex items-center gap-2 font-medium">
+                          <span className="truncate">{d.counterparty}</span>
+                          {d.kind === "LOAN_RECEIVED" && <Badge>Préstamo</Badge>}
                         </p>
                         <p className={d.dueDate && toISODate(d.dueDate) < today ? "text-xs text-negative" : "text-xs text-muted"}>
                           {d.dueDate ? `Vence el ${formatDate(d.dueDate)}` : "Sin fecha"}
                         </p>
                       </div>
-                      <span className="tabular">{formatMoney(d.remaining, d.currencyCode)}</span>
+                      <span className="tabular font-medium">{formatMoney(d.remaining, d.currencyCode)}</span>
                     </li>
                   ))}
                 </ul>
               )}
-              <Link href="/deudas" className="block border-t border-border px-4 py-2 text-xs text-accent hover:underline">
-                Ir a deudas
-              </Link>
+              <CardFooterLink href="/deudas">Ir a deudas</CardFooterLink>
             </Card>
           </section>
         </div>
