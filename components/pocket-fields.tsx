@@ -18,6 +18,7 @@ export function PocketFields({
   defaultBusinessId,
   currencyLocked,
   ownerLocked,
+  percentHint,
 }: {
   businesses: { id: string; name: string }[];
   // Negocio preseleccionado al crear ("" = Personal)
@@ -30,11 +31,14 @@ export function PocketFields({
     targetAmount: string;
     targetDate: string;
     color: string;
+    percent: string;
   };
   // Con dinero apartado no se puede cambiar la divisa
   currencyLocked?: boolean;
-  // La Caja siempre es del mismo dueño
+  // La Caja y Gastos fijos siempre son del mismo dueño
   ownerLocked?: boolean;
+  // Si se indica, el % no se edita (la Caja se lleva lo que sobra; Gastos fijos, su parte de los ingresos)
+  percentHint?: string;
 }) {
   return (
     <>
@@ -50,7 +54,7 @@ export function PocketFields({
           ))}
         </Select>
       </Field>
-      <Field label="Para" hint={ownerLocked ? "La Caja no cambia de dueño" : "Separa el dinero personal del de cada negocio"}>
+      <Field label="Para" hint={ownerLocked ? "No cambia de dueño" : "Separa el dinero personal del de cada negocio"}>
         <Select name="businessId" defaultValue={defaults?.businessId ?? defaultBusinessId ?? ""} disabled={ownerLocked}>
           <option value="">Personal</option>
           {businesses.map((b) => (
@@ -70,6 +74,16 @@ export function PocketFields({
         </Select>
         {currencyLocked && <input type="hidden" name="currencyCode" value={defaults?.currencyCode} />}
       </Field>
+      {percentHint ? (
+        <p className="text-xs text-muted">{percentHint}</p>
+      ) : (
+        <Field label="% de cada ingreso" hint="Opcional: se aparta solo al entrar dinero a la Caja">
+          <div className="relative">
+            <Input name="percent" inputMode="decimal" placeholder="0" defaultValue={defaults?.percent} className="pr-7 tabular" />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">%</span>
+          </div>
+        </Field>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Meta" hint="Opcional">
           <Input name="targetAmount" inputMode="decimal" placeholder="0,00" defaultValue={defaults?.targetAmount} />

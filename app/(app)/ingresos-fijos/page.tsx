@@ -43,8 +43,8 @@ async function IngresosFijosPageContent() {
         </Card>
         <Card className="flex flex-col justify-center">
           <p className="text-sm text-muted">¿Cuánto se llevan tus gastos fijos?</p>
-          <Link href="/presupuesto" className="text-sm font-medium text-accent hover:underline">
-            Ver presupuesto
+          <Link href="/apartados" className="text-sm font-medium text-accent hover:underline">
+            Ver cómo se reparten
           </Link>
         </Card>
       </div>

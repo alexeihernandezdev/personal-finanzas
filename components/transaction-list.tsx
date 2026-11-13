@@ -102,8 +102,7 @@ export async function TransactionList({
           const amount = display(t, signedAmount(t.type, t.amount), { sign: true });
           const color = t.category?.color ?? (t.type.startsWith("TRANSFER") ? "#6366f1" : "#94a3b8");
           const Icon = TYPE_ICONS[t.type] ?? ArrowLeftRight;
-          const businessSplits = t.splits.filter((s) => s.business);
-          const hasBadges = !editable || t.recurring || businessSplits.length > 0;
+          const hasBadges = !editable || t.recurring || t.business;
           const confirm = t.transferGroupId && t.type.startsWith("TRANSFER")
             ? "Se borrarán las dos partes de la transferencia. ¿Continuar?"
             : "¿Borrar este movimiento?";
@@ -131,13 +130,12 @@ export async function TransactionList({
                   <div className="mt-1 flex flex-wrap items-center gap-1">
                     {!editable && <Badge>{TYPE_LABELS[t.type]}</Badge>}
                     {t.recurring && <Badge>Fijo: {t.recurring.name}</Badge>}
-                    {businessSplits.map((s) => (
-                      <Badge key={s.id}>
-                        <span className="size-1.5 rounded-full" style={{ background: s.business!.color }} />
-                        {s.business!.name}
-                        {t.splits.length > 1 && ` ${display(t, s.amount).main}`}
+                    {t.business && (
+                      <Badge>
+                        <span className="size-1.5 rounded-full" style={{ background: t.business.color }} />
+                        {t.business.name}
                       </Badge>
-                    ))}
+                    )}
                   </div>
                 )}
               </div>

@@ -68,11 +68,6 @@ export const businessSchema = z.object({
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
 });
 
-export const splitSchema = z.object({
-  businessId: z.string().nullable(),
-  amount: amount("El monto de la división"),
-});
-
 export const transactionSchema = z.object({
   type: z.enum(["INCOME", "EXPENSE"]),
   walletId: z.string({ error: "Elige una cuenta" }),
@@ -80,10 +75,11 @@ export const transactionSchema = z.object({
   date: isoDate,
   categoryId: optionalId,
   description: z.string().max(200).optional(),
-  splits: z.array(splitSchema).default([]),
-  // Apartado al que entra / del que sale: "auto" = Caja de cada dueño, vacío = ninguno
+  // Dueño del movimiento: vacío = Personal
+  businessId: optionalId,
+  // Apartado al que entra / del que sale: "auto" = Caja de su dueño, vacío = ninguno
   pocketId: optionalId,
-  // Repartir según el presupuesto lo que entra a una Caja
+  // Repartir en sus apartados lo que entra a una Caja
   distribute: z
     .string()
     .optional()
@@ -123,8 +119,6 @@ export const recurringSchema = z.object({
   walletId: optionalId,
   categoryId: optionalId,
   businessId: optionalId,
-  // Apartado del que se paga: id, FIXED_RESERVE (el de "Gastos fijos" de su dueño) o vacío (la Caja)
-  pocketId: optionalId,
   autoPay: z
     .string()
     .optional()
@@ -146,21 +140,21 @@ export const recurringIncomeSchema = z.object({
   businessId: optionalId,
 }).refine(hasStartMonth, { message: "Indica el mes del próximo cobro", path: ["startMonth"] });
 
-export const budgetBucketSchema = z.object({
-  name: z.string({ error: "Escribe un nombre" }).min(1).max(60),
-  percent: z
-    .string({ error: "El porcentaje es obligatorio" })
-    .transform((v, ctx) => {
-      const n = normalizeAmount(v.replace("%", ""));
-      if (n === null || Number(n) <= 0 || Number(n) > 100) {
-        ctx.addIssue({ code: "custom", message: "El porcentaje debe estar entre 0 y 100" });
-        return z.NEVER;
-      }
-      return n;
-    }),
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-  pocketId: optionalId,
-});
+/** Porcentaje entre 0 y 100; vacío o 0 = sin porcentaje (`null`). */
+const optionalPercent = z
+  .string()
+  .optional()
+  .transform((v, ctx) => {
+    if (!v?.trim()) return null;
+    const n = normalizeAmount(v.replace("%", ""));
+    if (n === null || Number(n) > 100) {
+      ctx.addIssue({ code: "custom", message: "El porcentaje debe estar entre 0 y 100" });
+      return z.NEVER;
+    }
+    return Number(n) === 0 ? null : n;
+  });
+
+export const ownerPaySchema = z.object({ percent: optionalPercent });
 
 export const fixedBufferSchema = z.object({
   percent: z
@@ -241,6 +235,8 @@ export const pocketSchema = z.object({
   targetAmount: amount("La meta").optional(),
   targetDate: isoDate.optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  // % de cada ingreso de su dueño que se aparta aquí
+  percent: optionalPercent,
   // Solo al crear: monto que se aparta de entrada
   initialAmount: amount("El monto inicial").optional(),
 });

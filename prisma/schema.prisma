@@ -31,7 +31,6 @@ model User {
   transactions     Transaction[]
   recurringExpense RecurringExpense[]
   recurringIncome  RecurringIncome[]
-  budgetBuckets    BudgetBucket[]
   receivables      Receivable[]
   debts            Debt[]
   pockets          Pocket[]
@@ -103,15 +102,16 @@ model Business {
   name     String
   color    String  @default("#6366f1")
   archived Boolean @default(false)
+  // Tu sueldo: % de cada ingreso del negocio que pasa a la Caja Personal (y se reparte allí)
+  ownerPayPercent Decimal? @db.Decimal(5, 2)
 
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  splits          TransactionSplit[]
+  transactions    Transaction[]
   recurring       RecurringExpense[]
   recurringIncome RecurringIncome[]
   receivables     Receivable[]
   debts           Debt[]
   pockets         Pocket[]
-  budgetBuckets   BudgetBucket[]
 
   @@unique([userId, name])
 }
@@ -145,6 +145,8 @@ model Transaction {
   date            DateTime        @db.Date
   description     String          @default("")
   categoryId      String?
+  // Dueño del movimiento: null = Personal
+  businessId      String?
   transferGroupId String?
   receivableId    String?
   debtId          String?
@@ -157,29 +159,17 @@ model Transaction {
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet          Wallet             @relation(fields: [walletId], references: [id], onDelete: Cascade)
   category        Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  business        Business?          @relation(fields: [businessId], references: [id], onDelete: SetNull)
   receivable      Receivable?        @relation(fields: [receivableId], references: [id], onDelete: SetNull)
   debt            Debt?              @relation(fields: [debtId], references: [id], onDelete: SetNull)
   recurring       RecurringExpense?  @relation(fields: [recurringId], references: [id], onDelete: SetNull)
-  splits          TransactionSplit[]
   pocketMovements PocketMovement[]
 
   @@index([userId, date])
   @@index([walletId])
+  @@index([businessId])
   @@index([transferGroupId])
   @@index([recurringId, date])
-}
-
-model TransactionSplit {
-  id            String  @id @default(cuid())
-  transactionId String
-  businessId    String? // null = Personal
-  amount        Decimal @db.Decimal(20, 8)
-
-  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  business    Business?   @relation(fields: [businessId], references: [id], onDelete: SetNull)
-
-  @@index([transactionId])
-  @@index([businessId])
 }
 
 // ─── Gastos fijos ────────────────────────────────────────────────────────────
@@ -198,8 +188,6 @@ model RecurringExpense {
   walletId     String?
   categoryId   String?
   businessId   String?
-  // Apartado del que se paga (y que se llena primero al entrar dinero); null = la Caja del dueño
-  pocketId     String?
   active       Boolean  @default(true)
   // Se cobra solo (domiciliado): el pago se registra automáticamente el día del vencimiento
   autoPay      Boolean  @default(false)
@@ -209,7 +197,6 @@ model RecurringExpense {
   wallet       Wallet?             @relation(fields: [walletId], references: [id], onDelete: SetNull)
   category     Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   business     Business?           @relation(fields: [businessId], references: [id], onDelete: SetNull)
-  pocket       Pocket?             @relation(fields: [pocketId], references: [id], onDelete: SetNull)
   transactions Transaction[]
   paidMarks    RecurringPaidMark[]
 
@@ -253,31 +240,6 @@ model RecurringIncome {
   business Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
 
   @@index([userId])
-}
-
-// ─── Presupuesto ─────────────────────────────────────────────────────────────
-// Porcentaje de los ingresos fijos que se destina a algo (diversión, ahorro, inversión…).
-// Los gastos fijos no son una partida: su porcentaje se calcula a partir de sus montos.
-
-model BudgetBucket {
-  id         String   @id @default(cuid())
-  userId     String
-  name       String
-  percent    Decimal  @db.Decimal(5, 2)
-  color      String   @default("#6366f1")
-  position   Int      @default(0)
-  // Apartado al que va su porcentaje cuando se reparte un ingreso
-  pocketId   String?
-  // Dueño del presupuesto: null = Personal
-  businessId String?
-  createdAt  DateTime @default(now())
-
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pocket   Pocket?   @relation(fields: [pocketId], references: [id], onDelete: SetNull)
-  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([businessId])
 }
 
 // ─── Por cobrar / préstamos ──────────────────────────────────────────────────
@@ -342,11 +304,13 @@ model Debt {
 }
 
 // ─── Apartados (cuentas virtuales) ───────────────────────────────────────────
-// Separan parte del saldo de una cuenta real (ahorro, metas…). El dinero sigue en
-// la cuenta; el apartado solo lo marca como "no disponible".
-// Disponible de una cuenta = saldo − suma de sus apartados.
-// Cada dueño (Personal o un negocio) tiene una Caja (`isMain`): ahí cae su dinero y, al entrar,
-// se reparte según las partidas del presupuesto de ese dueño.
+// Separan parte del dinero de las cuentas (ahorro, metas…). El dinero sigue en las cuentas; el
+// apartado solo lo marca como "no disponible". Disponible = saldo de las cuentas − apartados.
+// Cada dueño (Personal o un negocio) tiene:
+// - una Caja (`isMain`): ahí cae su dinero y se queda lo que sobra al repartir;
+// - un apartado de Gastos fijos (`isFixedReserve`): se lleva el % que sus gastos fijos son de su
+//   ingreso fijo, y de él se pagan;
+// - apartados con `percent`: se llevan ese % de cada ingreso (ocio, ahorro, inversión…).
 
 enum PocketKind {
   SAVINGS // ahorro
@@ -368,15 +332,15 @@ model Pocket {
   archived       Boolean    @default(false)
   isMain         Boolean    @default(false) // Caja del dueño
   pinned         Boolean    @default(false) // Se muestra en el inicio
-  // Reserva de gastos fijos del dueño: se llena antes que las partidas al entrar dinero a la Caja
+  // Reserva de gastos fijos del dueño
   isFixedReserve Boolean    @default(false)
+  // % de cada ingreso de su dueño que se aparta aquí; null = solo se llena a mano
+  percent        Decimal?   @db.Decimal(5, 2)
   createdAt      DateTime   @default(now())
 
-  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  business          Business?          @relation(fields: [businessId], references: [id], onDelete: SetNull)
-  movements         PocketMovement[]
-  budgetBuckets     BudgetBucket[]
-  recurringExpenses RecurringExpense[]
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business  Business?        @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  movements PocketMovement[]
 
   @@index([userId])
 }

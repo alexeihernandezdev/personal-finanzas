@@ -2,18 +2,18 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { fail } from "@/lib/action";
-import { bucketAmounts } from "@/lib/budget";
-import { getFixedReserve, getMonthlyPlan } from "@/lib/fixed-reserve";
+import { planDistribution } from "@/lib/budget";
+import { ensureFixedReservePocket, getMonthlyPlan, receivedInMonth } from "@/lib/fixed-reserve";
 import { convert, dec, Decimal, type DecimalLike } from "@/lib/money";
-import { monthRange, toISODate } from "@/lib/utils";
+import { toISODate } from "@/lib/utils";
 
 type Tx = Prisma.TransactionClient;
 type PocketRef = { id: string; name: string; currencyCode: string; isMain: boolean; businessId: string | null };
 
-/** Tope de saltos al encadenar repartos (Caja de un negocio → Caja Personal → …). */
+/** Tope de saltos al encadenar repartos (Caja de un negocio → sueldo a la Caja Personal → …). */
 const MAX_DEPTH = 5;
 
-/** Valor del selector de apartado: la Caja del dueño de cada parte del movimiento. */
+/** Valor del selector de apartado: la Caja del dueño del movimiento. */
 export const AUTO_POCKET = "auto";
 
 type Ctx = {
@@ -23,7 +23,7 @@ type Ctx = {
   sourceTransactionId: string | null;
   /** VES por USD para cambiar de divisa */
   rate: DecimalLike | null | undefined;
-  /** Repartir según el presupuesto lo que entra a una Caja */
+  /** Repartir en sus apartados lo que entra a una Caja */
   distribute: boolean;
   depth?: number;
   visited?: Set<string>;
@@ -57,7 +57,7 @@ export function findMainPocket(tx: Tx, userId: string, businessId: string | null
 
 /**
  * Mete `amount` (en `fromCurrency`) en el apartado. Si es una Caja y `ctx.distribute`, lo reparte
- * después según el presupuesto de su dueño. Devuelve lo que entró, en la divisa del apartado.
+ * después entre los apartados de su dueño. Devuelve lo que entró, en la divisa del apartado.
  */
 export async function allocateToPocket(
   tx: Tx,
@@ -118,65 +118,59 @@ export async function withdrawFromPocket(
 }
 
 /**
- * Reparte lo que entró a una Caja. Primero cubre los próximos gastos fijos de su dueño (y el colchón),
- * empezando por el que vence antes: lo que les falta pasa a su apartado (o se queda en la Caja si se
- * pagan de ahí). Lo que sobra se reparte entre los apartados de las partidas, con el % ajustado para que
- * a fin de mes cada una haya recibido su % del ingreso fijo. El resto (libre) se queda en la Caja.
+ * Reparte lo que entró a una Caja según el plan de su dueño (ver `planDistribution`): su parte de
+ * gastos fijos va al apartado "Gastos fijos", cada apartado con porcentaje se lleva el suyo y, si es
+ * un negocio con sueldo, ese % pasa a la Caja Personal (que lo vuelve a repartir). Lo libre se queda en la Caja.
  */
 async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx: Ctx) {
   const depth = ctx.depth ?? 0;
   const visited = new Set(ctx.visited);
   if (depth >= MAX_DEPTH || visited.has(caja.id)) return;
   visited.add(caja.id);
-  const next = { ...ctx, depth: depth + 1, visited, distribute: false };
 
-  let rest = amount;
-  const reserve = await getFixedReserve(tx, ctx.userId, caja.businessId, ctx.rate, { pocketId: caja.id, amount });
-  const missing = [
-    ...reserve.items.filter((i) => i.missing.gt(0)).map((i) => ({ label: i.name, key: i.pocketKey, missing: i.missing })),
-    ...reserve.pockets.filter((p) => p.bufferMissing.gt(0)).map((p) => ({ label: "Colchón", key: p.key, missing: p.bufferMissing })),
-  ];
-  for (const m of missing) {
-    if (rest.lte(0)) break;
-    const pocket = reserve.pockets.find((p) => p.key === m.key)?.pocket;
-    if (!pocket) continue;
-    let part: Decimal;
-    try {
-      part = Decimal.min(rest, convert(m.missing, pocket.currencyCode, caja.currencyCode, ctx.rate).toDecimalPlaces(2, Decimal.ROUND_UP));
-    } catch {
-      continue;
-    }
-    // Si se paga desde la Caja, basta con no repartir esa parte
-    if (pocket.id === caja.id) {
-      rest = rest.sub(part);
-      continue;
-    }
-    const target = { ...pocket, businessId: caja.businessId };
-    const taken = await withdrawFromPocket(tx, caja, part, caja.currencyCode, `Gastos fijos: ${m.label} → ${pocket.name}`, ctx);
-    rest = rest.sub(taken);
-    await allocateToPocket(tx, target, taken, caja.currencyCode, `Gastos fijos: ${m.label} (de ${caja.name})`, next);
-  }
-  if (rest.lte(0)) return;
-
-  const buckets = await tx.budgetBucket.findMany({
-    where: { userId: ctx.userId, businessId: caja.businessId, pocket: { archived: false } },
-    include: { pocket: { select: pocketSelect } },
-    orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-  });
   const plan = await getMonthlyPlan(tx, ctx.userId, caja.businessId, caja.currencyCode, ctx.rate);
-  const planFixed = plan.fixed.mul(new Decimal(100).add(plan.bufferPercent)).div(100);
-  // Lo que entra por encima del ingreso fijo del mes se reparte con el % configurado
-  const before = await incomeReceivedInMonth(tx, ctx, caja);
-  const extra = plan.income.gt(0) ? before.add(amount).sub(plan.income) : new Decimal(0);
-  const parts = bucketAmounts(rest, extra, plan.income, planFixed, buckets);
-  for (const [i, b] of buckets.entries()) {
-    if (!b.pocket || b.pocket.id === caja.id) continue;
-    const part = parts[i];
-    if (part.isZero()) continue;
-    const taken = await withdrawFromPocket(tx, caja, part, caja.currencyCode, `${b.name} → ${b.pocket.name}`, ctx);
+  const pockets = await tx.pocket.findMany({
+    where: { userId: ctx.userId, businessId: caja.businessId, archived: false, isMain: false, isFixedReserve: false, percent: { gt: 0 } },
+    select: { ...pocketSelect, percent: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const business = caja.businessId
+    ? await tx.business.findUnique({ where: { id: caja.businessId }, select: { ownerPayPercent: true } })
+    : null;
+  const fixedPocket = plan.fixed.gt(0)
+    ? await ensureFixedReservePocket(tx, ctx.userId, caja.businessId, caja.currencyCode)
+    : null;
+  // Sin ingreso fijo, los gastos fijos se llevan lo que les falta para el mes
+  let fixedMissing = new Decimal(0);
+  if (fixedPocket && plan.income.isZero()) {
+    try {
+      const received = convert(await receivedInMonth(tx, fixedPocket.id, toISODate(ctx.date).slice(0, 7)), fixedPocket.currencyCode, caja.currencyCode, ctx.rate);
+      fixedMissing = plan.fixedWithBuffer.sub(received);
+    } catch {
+      // Sin tasa: no se reservan los gastos fijos
+    }
+  }
+  const ownerPay = dec(business?.ownerPayPercent);
+  const targets: { label: string; pocket: PocketRef; distribute: boolean }[] = pockets.map((p) => ({ label: p.name, pocket: p, distribute: false }));
+  const percents: DecimalLike[] = pockets.map((p) => p.percent ?? 0);
+  if (caja.businessId && ownerPay.gt(0)) {
+    const personal = await ensureMainPocket(tx, ctx.userId, null, caja.currencyCode);
+    targets.push({ label: "Sueldo", pocket: personal, distribute: true });
+    percents.push(ownerPay);
+  }
+
+  const parts = planDistribution(amount, { planIncome: plan.income, planFixed: plan.fixedWithBuffer, fixedMissing, percents });
+  const moves = [
+    ...(fixedPocket ? [{ label: "Gastos fijos", pocket: fixedPocket, distribute: false, amount: parts.fixed }] : []),
+    ...targets.map((t, i) => ({ ...t, amount: parts.parts[i] })),
+  ];
+  for (const m of moves) {
+    if (!m.amount.gt(0) || m.pocket.id === caja.id) continue;
+    const taken = await withdrawFromPocket(tx, caja, m.amount, caja.currencyCode, `${m.label} → ${m.pocket.name}`, ctx);
     if (taken.isZero()) continue;
-    await allocateToPocket(tx, b.pocket, taken, caja.currencyCode, `${b.name} (de ${caja.name})`, {
+    await allocateToPocket(tx, m.pocket, taken, caja.currencyCode, `${m.label} (de ${caja.name})`, {
       ...ctx,
+      distribute: m.distribute,
       depth: depth + 1,
       visited,
     });
@@ -184,36 +178,8 @@ async function distributeByBudget(tx: Tx, caja: PocketRef, amount: Decimal, ctx:
 }
 
 /**
- * Ingresos del dueño de la Caja ya recibidos en el mes de `ctx.date` (sin el que se está repartiendo),
- * en la divisa de la Caja. Los que no se pueden convertir se omiten.
- */
-async function incomeReceivedInMonth(tx: Tx, ctx: Ctx, caja: PocketRef) {
-  const { start, end } = monthRange(toISODate(ctx.date).slice(0, 7));
-  const splits = await tx.transactionSplit.findMany({
-    where: {
-      businessId: caja.businessId,
-      transaction: {
-        userId: ctx.userId,
-        type: "INCOME",
-        date: { gte: start, lt: end },
-        ...(ctx.sourceTransactionId ? { id: { not: ctx.sourceTransactionId } } : {}),
-      },
-    },
-    select: { amount: true, transaction: { select: { rateVesPerUsd: true, wallet: { select: { currencyCode: true } } } } },
-  });
-  return splits.reduce((acc, s) => {
-    try {
-      const rate = s.transaction.rateVesPerUsd ?? ctx.rate;
-      return acc.add(convert(s.amount, s.transaction.wallet.currencyCode, caja.currencyCode, rate));
-    } catch {
-      return acc;
-    }
-  }, new Decimal(0));
-}
-
-/**
  * Lleva un ingreso o un gasto a los apartados:
- * - `pocketId` = AUTO_POCKET: cada parte (split) entra a / sale de la Caja de su dueño.
+ * - `pocketId` = AUTO_POCKET: entra a / sale de la Caja de su dueño.
  * - `pocketId` = id de un apartado: todo el monto entra a / sale de ese apartado.
  * - vacío: no toca los apartados (queda como dinero sin asignar).
  * Los gastos en modo automático solo salen de Cajas que ya existan.
@@ -230,7 +196,8 @@ export async function applyTransactionToPockets(
     label: string;
     /** Descripción completa del movimiento de apartado; por defecto "Ingreso/Gasto: label" */
     description?: string;
-    splits: { businessId: string | null; amount: DecimalLike }[];
+    /** Dueño del movimiento: null = Personal */
+    businessId: string | null;
     pocketId: string | undefined;
     distribute: boolean;
     rate: DecimalLike | null | undefined;
@@ -263,39 +230,16 @@ export async function applyTransactionToPockets(
     return;
   }
 
-  // Agrupa por dueño (las partes de un mismo negocio van juntas)
-  const byOwner = new Map<string | null, Decimal>();
-  for (const s of input.splits) byOwner.set(s.businessId, (byOwner.get(s.businessId) ?? new Decimal(0)).add(dec(s.amount)));
-  for (const [businessId, amount] of byOwner) {
-    const pocket =
-      input.type === "INCOME"
-        ? await ensureMainPocket(tx, input.userId, businessId, input.cajaCurrency)
-        : await findMainPocket(tx, input.userId, businessId);
-    if (pocket) await move(pocket, amount);
-  }
+  const pocket =
+    input.type === "INCOME"
+      ? await ensureMainPocket(tx, input.userId, input.businessId, input.cajaCurrency)
+      : await findMainPocket(tx, input.userId, input.businessId);
+  if (pocket) await move(pocket, input.amount);
 }
 
-/** Deshace lo que un ingreso o gasto hizo en los apartados (no toca los repartos manuales del presupuesto). */
+/** Deshace lo que un ingreso o gasto hizo en los apartados. */
 export function revertTransactionPockets(tx: Tx, transactionId: string) {
-  return tx.pocketMovement.deleteMany({ where: { sourceTransactionId: transactionId, groupId: { not: null } } });
-}
-
-/**
- * Lo que un ingreso ya dejó apartado (neto, en `currency`): sus entradas a apartados menos lo que salió
- * de ellas al repartir. `manualOnly`: solo los repartos manuales del presupuesto (sin `groupId`).
- */
-export async function allocatedFromTransaction(
-  tx: Pick<Tx, "pocketMovement">,
-  transactionId: string,
-  currency: string,
-  rate: DecimalLike | null | undefined,
-  opts: { manualOnly?: boolean } = {},
-) {
-  const rows = await tx.pocketMovement.findMany({
-    where: { sourceTransactionId: transactionId, ...(opts.manualOnly ? { groupId: null } : {}) },
-    select: { amount: true, pocket: { select: { currencyCode: true } } },
-  });
-  return rows.reduce((acc, m) => acc.add(convert(m.amount, m.pocket.currencyCode, currency, rate)), new Decimal(0));
+  return tx.pocketMovement.deleteMany({ where: { sourceTransactionId: transactionId } });
 }
 
 /** Apartado al que fue a parar (o del que salió) un movimiento sin reparto; null si no tocó ninguno. */

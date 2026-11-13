@@ -4,7 +4,7 @@ import Link from "next/link";
 import { TransactionForm } from "@/components/transaction-form";
 import { buttonClass, Card, EmptyState, PageHeader } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
-import { getCurrentRates, serializeRates } from "@/lib/rates";
+import { getCurrentRates, pickRate, serializeRates } from "@/lib/rates";
 import { getBusinesses, getCategories, getPocketChoices, getWalletsWithBalance } from "@/lib/queries";
 import { todayISO } from "@/lib/utils";
 import { createTransaction } from "../actions";
@@ -12,12 +12,12 @@ import { createTransaction } from "../actions";
 async function NuevoMovimientoPageContent({ searchParams }: PageProps<"/movimientos/nuevo">) {
   const { cuenta } = await searchParams;
   const user = await requireUser();
-  const [wallets, categories, businesses, rates, pockets] = await Promise.all([
+  const rates = await getCurrentRates();
+  const [wallets, categories, businesses, pockets] = await Promise.all([
     getWalletsWithBalance(user.id),
     getCategories(user.id),
     getBusinesses(user.id),
-    getCurrentRates(),
-    getPocketChoices(user.id),
+    getPocketChoices(user.id, pickRate(rates, user.preferredRateSource)),
   ]);
 
   return (

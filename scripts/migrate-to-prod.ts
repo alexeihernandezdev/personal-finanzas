@@ -39,7 +39,6 @@ const tables = [
   "receivable",
   "debt",
   "transaction",
-  "transactionSplit",
   "exchangeRate",
 ] as const;
 

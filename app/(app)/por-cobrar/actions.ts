@@ -55,7 +55,7 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
             expectedDate: d.expectedDate ? parseISODate(d.expectedDate) : null,
             businessId: d.businessId ?? null,
             transactions: {
-              create: { userId: user.id, walletId: wallet.id, type: "LOAN_OUT", amount: d.amount, date, description, ...rate },
+              create: { userId: user.id, walletId: wallet.id, type: "LOAN_OUT", amount: d.amount, date, description, businessId: d.businessId ?? null, ...rate },
             },
           },
           include: { transactions: { select: { id: true } } },
@@ -70,7 +70,7 @@ export async function createReceivable(_prev: ActionState, formData: FormData): 
           date,
           label: d.counterparty,
           description,
-          splits: [{ businessId: d.businessId ?? null, amount: d.amount }],
+          businessId: d.businessId ?? null,
           pocketId: d.pocketId,
           distribute: false,
           rate: rate.rateVesPerUsd,
@@ -150,11 +150,10 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
           receivableId: r.id,
           categoryId,
           ...rate,
-          // Solo los ingresos cuentan para los negocios; la devolución de un préstamo no es ingreso
-          ...(isLoan ? {} : { splits: { create: [{ businessId: r.businessId, amount: d.amount }] } }),
+          businessId: r.businessId,
         },
       });
-      // Lo cobrado entra al apartado elegido; solo un cobro (no una devolución) se reparte por presupuesto
+      // Lo cobrado entra al apartado elegido; solo un cobro (no una devolución) se reparte entre los apartados
       await applyTransactionToPockets(tx, {
         userId: user.id,
         transactionId: created.id,
@@ -164,7 +163,7 @@ export async function registerPayment(_prev: ActionState, formData: FormData): P
         date,
         label: r.counterparty,
         description,
-        splits: [{ businessId: r.businessId, amount: d.amount }],
+        businessId: r.businessId,
         pocketId: d.pocketId,
         distribute: !isLoan && d.distribute,
         rate: rate.rateVesPerUsd,

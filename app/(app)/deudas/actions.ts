@@ -57,7 +57,7 @@ export async function createDebt(_prev: ActionState, formData: FormData): Promis
             dueDate: d.dueDate ? parseISODate(d.dueDate) : null,
             businessId: d.businessId ?? null,
             transactions: {
-              create: { userId: user.id, walletId: wallet.id, type: "LOAN_IN", amount: d.amount, date, description, ...rate },
+              create: { userId: user.id, walletId: wallet.id, type: "LOAN_IN", amount: d.amount, date, description, businessId: d.businessId ?? null, ...rate },
             },
           },
           include: { transactions: { select: { id: true } } },
@@ -72,7 +72,7 @@ export async function createDebt(_prev: ActionState, formData: FormData): Promis
           date,
           label: d.counterparty,
           description,
-          splits: [{ businessId: d.businessId ?? null, amount: d.amount }],
+          businessId: d.businessId ?? null,
           pocketId: d.pocketId,
           distribute: false,
           rate: rate.rateVesPerUsd,
@@ -150,7 +150,7 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
           debtId: d.id,
           categoryId,
           ...rate,
-          ...(isLoan ? {} : { splits: { create: [{ businessId: d.businessId, amount: p.amount }] } }),
+          businessId: d.businessId,
         },
       });
       // El pago sale del apartado elegido
@@ -163,7 +163,7 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
         date,
         label: d.counterparty,
         description,
-        splits: [{ businessId: d.businessId, amount: p.amount }],
+        businessId: d.businessId,
         pocketId: p.pocketId,
         distribute: false,
         rate: rate.rateVesPerUsd,
@@ -232,7 +232,6 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
         await db.transaction.update({ where: { id: tx.id }, data: { walletId: wallet.id, amount: p.amount, date, ...rate } });
         await db.debt.update({ where: { id: debt.id }, data: owed });
       } else {
-        await db.transactionSplit.deleteMany({ where: { transactionId: tx.id } });
         await db.transaction.update({
           where: { id: tx.id },
           data: {
@@ -240,7 +239,6 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
             amount: p.amount,
             date,
             ...rate,
-            ...(tx.type === "EXPENSE" ? { splits: { create: [{ businessId: debt.businessId, amount: p.amount }] } } : {}),
           },
         });
       }
@@ -257,7 +255,7 @@ export async function updateDebtTransaction(txId: string, _prev: ActionState, fo
         date,
         label: debt.counterparty,
         description: tx.description,
-        splits: [{ businessId: debt.businessId, amount: p.amount }],
+        businessId: debt.businessId,
         pocketId,
         distribute: false,
         rate: rate.rateVesPerUsd,

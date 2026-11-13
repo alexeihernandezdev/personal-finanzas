@@ -205,7 +205,7 @@ async function DashboardPageContent() {
 
         <div className="flex min-w-0 flex-col gap-6">
           <section>
-            <SectionTitle>Presupuesto</SectionTitle>
+            <SectionTitle>Plan del mes</SectionTitle>
             <Card className="p-0 sm:p-0">
               {budget.income.isZero() ? (
                 <p className="p-4 text-sm text-muted">Registra tus ingresos fijos para ver cómo se reparten.</p>
@@ -219,7 +219,7 @@ async function DashboardPageContent() {
                     <span>Gastos fijos{budget.buffer.gt(0) && " + colchón"}</span>
                     <span className="tabular">{formatPercent(budget.fixedPercent.add(budget.bufferIncomePercent))}</span>
                   </li>
-                  {budget.buckets.map((b) => (
+                  {budget.pockets.map((b) => (
                     <li key={b.id} className="flex items-center gap-2 px-4 py-2.5">
                       <span className="size-2.5 shrink-0 rounded-full" style={{ background: b.color }} />
                       <span className="min-w-0 flex-1 truncate">{b.name}</span>
@@ -234,7 +234,7 @@ async function DashboardPageContent() {
                   </li>
                 </ul>
               )}
-              <CardFooterLink href="/presupuesto">Ir a presupuesto</CardFooterLink>
+              <CardFooterLink href="/apartados">Ver apartados</CardFooterLink>
             </Card>
           </section>
           {pinnedPockets.length > 0 && (

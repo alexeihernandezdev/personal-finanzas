@@ -6,9 +6,8 @@ import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, zodError, type ActionState } from "@/lib/action";
 import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
-import { dec, formatMoney, splitsMatchTotal } from "@/lib/money";
 import { recomputeDebtStatus } from "@/lib/debts";
-import { allocatedFromTransaction, applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
+import { applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate, toISODate } from "@/lib/utils";
 import { transactionSchema } from "@/lib/validators";
@@ -18,13 +17,6 @@ function parseTransactionForm(formData: FormData) {
     const v = formData.get(k);
     return typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
   };
-  // Los splits llegan como JSON desde el formulario (cliente)
-  let splits: unknown = [];
-  try {
-    splits = JSON.parse(str("splits") ?? "[]");
-  } catch {
-    splits = [];
-  }
   return transactionSchema.safeParse({
     type: str("type"),
     walletId: str("walletId"),
@@ -32,7 +24,7 @@ function parseTransactionForm(formData: FormData) {
     date: str("date"),
     categoryId: str("categoryId"),
     description: str("description"),
-    splits,
+    businessId: str("businessId"),
     pocketId: str("pocketId"),
     distribute: str("distribute"),
   });
@@ -43,16 +35,11 @@ async function validateAndBuild(userId: string, formData: FormData) {
   if (!parsed.success) return { error: zodError(parsed.error) };
   const data = parsed.data;
 
-  // Sin splits => 100% Personal. Con splits => deben sumar el total.
-  const splits = data.splits.length ? data.splits : [{ businessId: null, amount: data.amount }];
-  if (!splitsMatchTotal(data.amount, splits.map((s) => s.amount))) {
-    return { error: fail("La división entre negocios debe sumar exactamente el monto total") };
-  }
   try {
     await assertOwned(userId, {
       walletIds: [data.walletId],
       categoryId: data.categoryId,
-      businessIds: splits.map((s) => s.businessId),
+      businessIds: [data.businessId],
     });
   } catch (e) {
     if (e instanceof OwnershipError) return { error: fail("Cuenta, categoría o negocio inválido") };
@@ -62,7 +49,7 @@ async function validateAndBuild(userId: string, formData: FormData) {
     const cat = await prisma.category.findUnique({ where: { id: data.categoryId } });
     if (cat && cat.kind !== data.type) return { error: fail("La categoría no corresponde al tipo de movimiento") };
   }
-  return { data, splits };
+  return { data };
 }
 
 type Built = NonNullable<Awaited<ReturnType<typeof validateAndBuild>>["data"]>;
@@ -73,7 +60,6 @@ async function moveToPockets(
   user: { id: string; displayCurrency: string },
   transactionId: string,
   data: Built,
-  splits: { businessId: string | null; amount: string }[],
   rate: string | null | undefined,
 ) {
   const [wallet, category] = await Promise.all([
@@ -88,7 +74,7 @@ async function moveToPockets(
     currency: wallet.currencyCode,
     date: parseISODate(data.date),
     label: data.description || category?.name || "sin descripción",
-    splits,
+    businessId: data.businessId ?? null,
     pocketId: data.pocketId,
     distribute: data.distribute,
     rate,
@@ -100,7 +86,7 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
   const user = await requireUser();
   const result = await validateAndBuild(user.id, formData);
   if (!result.data) return result.error;
-  const { data, splits } = result;
+  const { data } = result;
   // Tasa del día del movimiento (no la de hoy si se registra con fecha pasada)
   const rate = await rateForDate(user.preferredRateSource, data.date);
 
@@ -115,11 +101,11 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
           date: parseISODate(data.date),
           categoryId: data.categoryId ?? null,
           description: data.description ?? "",
+          businessId: data.businessId ?? null,
           ...rate,
-          splits: { create: splits.map((s) => ({ businessId: s.businessId, amount: s.amount })) },
         },
       });
-      await moveToPockets(tx, user, created.id, data, splits, rate.rateVesPerUsd);
+      await moveToPockets(tx, user, created.id, data, rate.rateVesPerUsd);
     });
   } catch (e) {
     return pocketFailure(e);
@@ -130,11 +116,11 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
 
 export async function updateTransaction(id: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
-  const existing = await prisma.transaction.findFirst({ where: { id, userId: user.id }, include: { wallet: true } });
+  const existing = await prisma.transaction.findFirst({ where: { id, userId: user.id } });
   if (!existing || (existing.type !== "INCOME" && existing.type !== "EXPENSE")) return fail("Movimiento no encontrado");
   const result = await validateAndBuild(user.id, formData);
   if (!result.data) return result.error;
-  const { data, splits } = result;
+  const { data } = result;
   // Un cobro o un pago de deuda no puede cambiar de tipo: dejaría de contar en su registro
   if ((existing.receivableId || existing.debtId) && data.type !== existing.type) {
     return fail("Este movimiento es un cobro o pago de una deuda: no puede cambiar de tipo");
@@ -145,23 +131,8 @@ export async function updateTransaction(id: string, _prev: ActionState, formData
     toISODate(existing.date) === data.date && existing.rateVesPerUsd
       ? { rateVesPerUsd: existing.rateVesPerUsd.toString(), rateSource: existing.rateSource }
       : await rateForDate(user.preferredRateSource, data.date);
-  const wallet = await prisma.wallet.findUniqueOrThrow({ where: { id: data.walletId }, select: { currencyCode: true } });
-  // Los repartos manuales del presupuesto se conservan si siguen teniendo sentido
-  const keepManual = data.type === "INCOME" && existing.type === "INCOME" && wallet.currencyCode === existing.wallet.currencyCode;
-
   try {
     await prisma.$transaction(async (tx) => {
-      if (keepManual) {
-        const manual = await allocatedFromTransaction(tx, id, wallet.currencyCode, rate.rateVesPerUsd, { manualOnly: true });
-        if (manual.toDecimalPlaces(2).gt(dec(data.amount))) {
-          throw new EditError(
-            `Ya repartiste ${formatMoney(manual, wallet.currencyCode)} de este ingreso: borra ese reparto en Apartados antes de bajar el monto`,
-          );
-        }
-      } else {
-        await tx.pocketMovement.deleteMany({ where: { sourceTransactionId: id } });
-      }
-      await tx.transactionSplit.deleteMany({ where: { transactionId: id } });
       await tx.transaction.update({
         where: { id },
         data: {
@@ -171,25 +142,22 @@ export async function updateTransaction(id: string, _prev: ActionState, formData
           date: parseISODate(data.date),
           categoryId: data.categoryId ?? null,
           description: data.description ?? "",
+          businessId: data.businessId ?? null,
           ...rate,
-          splits: { create: splits.map((s) => ({ businessId: s.businessId, amount: s.amount })) },
         },
       });
       // Se rehace lo que el movimiento hizo en los apartados con los datos nuevos
       await revertTransactionPockets(tx, id);
-      await moveToPockets(tx, user, id, data, splits, rate.rateVesPerUsd);
+      await moveToPockets(tx, user, id, data, rate.rateVesPerUsd);
       if (existing.receivableId) await recomputeReceivableStatus(existing.receivableId, tx);
       if (existing.debtId) await recomputeDebtStatus(existing.debtId, tx);
     });
   } catch (e) {
-    if (e instanceof EditError) return fail(e.message);
     return pocketFailure(e);
   }
   revalidatePath("/", "layout");
   redirect("/movimientos");
 }
-
-class EditError extends Error {}
 
 /** Movimientos que solo se borran desde su préstamo (borrarlos sueltos dejaría la deuda descuadrada). */
 const LOAN_ORIGIN_TYPES = ["LOAN_OUT", "LOAN_IN"];

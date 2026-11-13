@@ -7,31 +7,31 @@ import { MonthNav, parseMonthParam } from "@/components/month-nav";
 import { PocketPicker } from "@/components/pocket-picker";
 import { CURRENCIES } from "@/components/wallet-fields";
 import { Amount, Badge, buttonClass, Card, Checkbox, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui";
-import { FIXED_RESERVE, FREQUENCIES, nextDueMonth } from "@/lib/budget";
+import { FREQUENCIES, nextDueMonth } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { prisma } from "@/lib/db";
-import { getFixedReserve, sumInCurrency } from "@/lib/fixed-reserve";
+import { getMonthlyPlan } from "@/lib/fixed-reserve";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getBusinesses, getCategories, getPocketChoices, getRecurringForMonth, getWalletsWithBalance } from "@/lib/queries";
+import { getBusinesses, getCategories, getPocketChoices, getPockets, getRecurringForMonth, getWalletsWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { processAutoPayments } from "@/lib/recurring";
 import { cn, currentMonth, formatDate, toISODate, todayISO } from "@/lib/utils";
-import { assignFixedReserveToAll, createRecurring, deleteRecurring, updateRecurring, payRecurring, toggleAutoPay, toggleRecurring, unpayRecurring } from "./actions";
+import { createRecurring, deleteRecurring, updateRecurring, payRecurring, toggleAutoPay, toggleRecurring, unpayRecurring } from "./actions";
 
 async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos">) {
   const user = await requireUser();
   const { mes, negocio } = await searchParams;
   const month = parseMonthParam(mes, currentMonth());
-  const isCurrentMonth = month === currentMonth();
   // Registra los cobros automáticos que ya vencieron (por si el cron aún no corrió)
   await processAutoPayments(user.id).catch(() => null);
-  const [allItems, wallets, categories, businesses, rates, pockets] = await Promise.all([
+  const [allItems, wallets, categories, businesses, rates, pockets, pocketBalances] = await Promise.all([
     getRecurringForMonth(user.id, month),
     getWalletsWithBalance(user.id),
     getCategories(user.id),
     getBusinesses(user.id),
     getCurrentRates(),
     getPocketChoices(user.id),
+    getPockets(user.id),
   ]);
   const rate = pickRate(rates, user.preferredRateSource);
   // Los gastos fijos van por dueño del dinero: Personal y cada negocio
@@ -40,19 +40,16 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
   const businessId = currentTab.key === "personal" ? null : currentTab.key;
   // Primero los que vencen este mes; los trimestrales, semestrales y anuales que no, al final
   const items = allItems.filter((i) => i.businessId === businessId).sort((a, b) => Number(b.due) - Number(a.due));
-  // Apartados para "Se paga de": los del dueño primero, sin las Cajas (vacío = la Caja)
-  const reservePockets = pockets
-    .filter((p) => !p.isMain)
-    .sort((a, b) => Number(a.businessId !== businessId) - Number(b.businessId !== businessId));
-  const ownReserve = reservePockets.find((p) => p.isFixedReserve && p.businessId === businessId);
-  const reserve = await getFixedReserve(prisma, user.id, businessId, rate);
-  const coverage = new Map(reserve.items.map((i) => [i.id, i]));
-  const inDisplay = (key: "target" | "missing") =>
-    sumInCurrency(reserve.pockets.map((p) => ({ amount: p[key], currencyCode: p.pocket?.currencyCode })), user.displayCurrency, rate);
-  const reserveTarget = inDisplay("target");
-  const reserveMissing = inDisplay("missing");
-  const reserveHave = reserveTarget.sub(reserveMissing);
-  const withoutPocket = items.filter((i) => i.active && !i.pocketId).length;
+  // Los pagos salen del apartado "Gastos fijos" del dueño (se puede elegir otro al pagar)
+  const ownReserve = pocketBalances.find((p) => p.isFixedReserve && !p.archived && p.businessId === businessId);
+  const plan = await getMonthlyPlan(prisma, user.id, businessId, user.displayCurrency, rate);
+  let reserveHave = new Decimal(0);
+  try {
+    if (ownReserve) reserveHave = convert(ownReserve.balance, ownReserve.currencyCode, user.displayCurrency, rate);
+  } catch {
+    // Sin tasa para convertir
+  }
+  const reserveTarget = plan.fixedWithBuffer;
   const active = items.filter((i) => i.active && i.due);
   const sumIn = (list: typeof items) =>
     list.reduce((acc, i) => {
@@ -97,35 +94,22 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
           <p className="mt-1 truncate text-xl font-semibold tabular text-negative sm:text-2xl">{formatMoney(pending, user.displayCurrency)}</p>
         </Card>
         <Card className="col-span-2 sm:col-span-1">
-          <p className="text-sm text-muted">Reservado para los próximos pagos</p>
+          <p className="text-sm text-muted">En {ownReserve?.name ?? "Gastos fijos"}</p>
           <p className="text-2xl font-semibold tabular">
             {formatMoney(reserveHave, user.displayCurrency)}
-            <span className="ml-1 text-sm font-normal text-muted">de {formatMoney(reserveTarget, user.displayCurrency)}</span>
+            <span className="ml-1 text-sm font-normal text-muted">de {formatMoney(reserveTarget, user.displayCurrency)} al mes</span>
           </p>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-border">
             <div
-              className={cn("h-full rounded-full", reserveMissing.gt(0) ? "bg-accent" : "bg-positive")}
-              style={{ width: `${reserveTarget.isZero() ? 0 : reserveHave.div(reserveTarget).mul(100).toNumber()}%` }}
+              className={cn("h-full rounded-full", reserveHave.lt(reserveTarget) ? "bg-accent" : "bg-positive")}
+              style={{ width: `${reserveTarget.isZero() ? 0 : Decimal.min(100, reserveHave.div(reserveTarget).mul(100)).toNumber()}%` }}
             />
           </div>
           <p className="mt-1 text-xs text-muted">
-            {reserveMissing.gt(0)
-              ? `Faltan ${formatMoney(reserveMissing, user.displayCurrency)}: se cubren primero con lo próximo que entre a la Caja`
-              : "Cubierto, colchón incluido"}
+            Se llena con cada ingreso de {currentTab.name}; los anuales y trimestrales cuentan su parte de cada mes.
           </p>
         </Card>
       </div>
-      {withoutPocket > 0 && (
-        <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-accent/20 bg-accent-soft/50 p-4 text-sm text-muted sm:flex-row sm:items-center">
-          <span className="flex-1 text-pretty">
-            {withoutPocket === 1 ? "1 gasto fijo se paga" : `${withoutPocket} gastos fijos se pagan`} desde la Caja. Pásalos a un
-            apartado de reserva para que su dinero no se mezcle con el libre.
-          </span>
-          <ConfirmButton action={assignFixedReserveToAll.bind(null, businessId)} variant="secondary" className="w-full sm:h-8 sm:w-auto sm:text-xs">
-            Usar &quot;Gastos fijos&quot; para todos
-          </ConfirmButton>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div>
@@ -137,8 +121,6 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                 {items.map((r) => {
                   const overdue = r.active && r.due && !r.paid && toISODate(r.dueDate) < today;
                   const frequency = FREQUENCIES.find((f) => f.months === r.intervalMonths);
-                  // La reserva cubre el próximo pago pendiente: solo se muestra en el mes en curso
-                  const cover = r.active && !r.paid && isCurrentMonth ? coverage.get(r.id) : undefined;
                   return (
                     <li key={r.id} className={cn("relative px-4 py-4", !r.active && "opacity-50")}>
                       <div className="flex items-start gap-3">
@@ -158,19 +140,10 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                             {r.category && ` · ${r.category.name}`}
                             {r.business && ` · ${r.business.name}`}
                             {r.wallet && ` · ${r.wallet.name}`}
-                            {` · de ${r.pocket && !r.pocket.archived ? r.pocket.name : "la Caja"}`}
                           </p>
-                          {(overdue || cover || r.autoPay || !r.active) && (
+                          {(overdue || r.autoPay || !r.active) && (
                             <div className="mt-1.5 flex flex-wrap gap-1">
                               {overdue && <Badge color="error">Vencido</Badge>}
-                              {cover &&
-                                (cover.missing.gt(0) ? (
-                                  <Badge color="brand">
-                                    Faltan {formatMoney(cover.missing, cover.pocket?.currencyCode ?? r.currencyCode)}
-                                  </Badge>
-                                ) : (
-                                  <Badge color="success">Cubierto</Badge>
-                                ))}
                               {r.autoPay && (
                                 <Badge>
                                   <Repeat className="size-3" /> Automático
@@ -266,7 +239,7 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                               <PocketPicker
                                 pockets={pockets}
                                 direction="out"
-                                defaultValue={r.pocket && !r.pocket.archived ? r.pocket.id : "auto"}
+                                defaultValue={ownReserve?.id ?? "auto"}
                                 className="col-span-2 sm:h-8 sm:w-44 sm:text-xs"
                               />
                               <Checkbox
@@ -293,8 +266,6 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
                                   wallets={wallets}
                                   categories={categories}
                                   businesses={businesses}
-                                  pockets={reservePockets}
-                                  newPocketDefault={ownReserve?.id ?? FIXED_RESERVE}
                                   defaults={r}
                                 />
                                 <SubmitButton>Guardar</SubmitButton>
@@ -333,8 +304,6 @@ async function GastosFijosPageContent({ searchParams }: PageProps<"/gastos-fijos
               wallets={wallets}
               categories={categories}
               businesses={businesses}
-              pockets={reservePockets}
-              newPocketDefault={ownReserve?.id ?? FIXED_RESERVE}
               businessId={businessId}
             />
             <SubmitButton>Crear</SubmitButton>
@@ -355,7 +324,6 @@ type RecurringDefaults = {
   walletId: string | null;
   categoryId: string | null;
   businessId: string | null;
-  pocketId: string | null;
   autoPay: boolean;
 };
 
@@ -363,18 +331,12 @@ function RecurringFields({
   wallets,
   categories,
   businesses,
-  pockets,
-  newPocketDefault,
   businessId = null,
   defaults,
 }: {
   wallets: { id: string; name: string }[];
   categories: { id: string; name: string; kind: string }[];
   businesses: { id: string; name: string }[];
-  /** Apartados de los que se puede pagar (sin las Cajas) */
-  pockets: { id: string; name: string; currencyCode: string; ownerName: string }[];
-  /** "Se paga de" para un gasto nuevo: el apartado de "Gastos fijos" del dueño o FIXED_RESERVE para crearlo */
-  newPocketDefault: string;
   /** Dueño de un gasto nuevo (null = Personal) */
   businessId?: string | null;
   defaults?: RecurringDefaults;
@@ -419,7 +381,7 @@ function RecurringFields({
           defaultValue={defaults?.startMonth ? nextDueMonth(defaults, currentMonth()) : currentMonth()}
         />
         <span className="text-xs text-muted">
-          Para los trimestrales, semestrales y anuales: desde ahí se repite. Su reserva se llena poco a poco cada mes.
+          Para los trimestrales, semestrales y anuales: desde ahí se repite. Cada mes se aparta su parte (anual ÷ 12…).
         </span>
       </Field>
       <Field label="Cuenta habitual">
@@ -453,18 +415,6 @@ function RecurringFields({
             </option>
           ))}
         </Select>
-      </Field>
-      <Field label="Se paga de">
-        <Select name="pocketId" defaultValue={defaults ? (defaults.pocketId ?? "") : newPocketDefault}>
-          {newPocketDefault === FIXED_RESERVE && <option value={FIXED_RESERVE}>Gastos fijos (nuevo apartado de reserva)</option>}
-          {pockets.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} · {p.currencyCode} ({p.ownerName})
-            </option>
-          ))}
-          <option value="">La Caja de su dueño</option>
-        </Select>
-        <span className="text-xs text-muted">Al entrar dinero a la Caja, este apartado se llena primero para cubrir el próximo pago.</span>
       </Field>
       <Checkbox
         name="autoPay"

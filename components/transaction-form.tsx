@@ -1,18 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Calculator, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Calculator } from "lucide-react";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { CurrencyConverter, type RatesDTO } from "@/components/currency-converter";
-import { Button, Checkbox, Field, Input, Select } from "@/components/ui";
+import { Checkbox, Field, Input, Select } from "@/components/ui";
 import type { ActionState } from "@/lib/action";
-import { dec, Decimal, formatMoney, splitByPercent } from "@/lib/money";
+import { dec, Decimal, formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { normalizeAmount } from "@/lib/validators";
 
 type Option = { id: string; name: string };
 
-/** Apartado elegible al registrar un movimiento. `rules`: reparto automático si es una Caja. */
+/**
+ * Apartado elegible al registrar un movimiento. `rules`: reparto automático si es una Caja
+ * (`percent` null = los gastos fijos se llevan lo que les falta del mes).
+ */
 export type PocketChoice = {
   id: string;
   name: string;
@@ -20,7 +23,7 @@ export type PocketChoice = {
   isMain: boolean;
   businessId: string | null;
   ownerName: string;
-  rules: { name: string; percent: string; target: string }[];
+  rules: { name: string; percent: string | null; target: string }[];
 };
 
 const AUTO_POCKET = "auto";
@@ -41,16 +44,13 @@ type Props = {
     date: string;
     categoryId: string | null;
     description: string;
-    splits: { businessId: string | null; amount: string }[];
+    businessId: string | null;
     pocketId: string;
     distribute: boolean;
   };
   defaultWalletId?: string;
   submitLabel?: string;
 };
-
-type Row = { businessId: string; value: string };
-const PERSONAL = "";
 
 export function TransactionForm({
   action,
@@ -65,67 +65,31 @@ export function TransactionForm({
   defaultWalletId,
   submitLabel = "Guardar",
 }: Props) {
-  const initialSplits = defaults?.splits.filter((s) => s.businessId) ?? [];
-  const hasRealSplits = initialSplits.length > 0;
   const [type, setType] = useState<"INCOME" | "EXPENSE">(defaults?.type ?? "EXPENSE");
   const [walletId, setWalletId] = useState(defaults?.walletId ?? defaultWalletId ?? wallets[0]?.id ?? "");
   const [amount, setAmount] = useState(defaults?.amount ?? "");
-  const [splitOn, setSplitOn] = useState(hasRealSplits);
+  const [businessId, setBusinessId] = useState(defaults?.businessId ?? "");
   const [calcOn, setCalcOn] = useState(false);
-  const [mode, setMode] = useState<"percent" | "amount">(hasRealSplits ? "amount" : "percent");
   const [pocketId, setPocketId] = useState(defaults?.pocketId ?? AUTO_POCKET);
-  const [rows, setRows] = useState<Row[]>(
-    hasRealSplits
-      ? (defaults?.splits ?? []).map((s) => ({ businessId: s.businessId ?? PERSONAL, value: s.amount }))
-      : [{ businessId: businesses[0]?.id ?? PERSONAL, value: "100" }],
-  );
 
   const currency = wallets.find((w) => w.id === walletId)?.currencyCode ?? "USD";
   const total = dec(normalizeAmount(amount) ?? "0");
 
-  const computed = useMemo(() => {
-    const values = rows.map((r) => dec(normalizeAmount(r.value) ?? "0"));
-    const amounts = mode === "percent" ? splitByPercent(total, values) : values;
-    const sum = amounts.reduce((a, b) => a.add(b), new Decimal(0));
-    const pctSum = values.reduce((a, b) => a.add(b), new Decimal(0));
-    const ok = mode === "percent" ? pctSum.eq(100) : sum.toDecimalPlaces(2).eq(total.toDecimalPlaces(2));
-    return { amounts, ok, diff: mode === "percent" ? new Decimal(100).sub(pctSum) : total.sub(sum) };
-  }, [rows, mode, total]);
-
-  const splitsJson =
-    splitOn && total.gt(0)
-      ? JSON.stringify(
-          rows.map((r, i) => ({ businessId: r.businessId || null, amount: computed.amounts[i].toFixed(2) })),
-        )
-      : "[]";
-
   const filteredCategories = categories.filter((c) => c.kind === type);
 
-  // Dueños del movimiento: cada parte de la división, o Personal si no se divide
-  const ownerIds = splitOn ? [...new Set(rows.map((r) => r.businessId || null))] : [null];
-  const ownerTotal = (ownerId: string | null) =>
-    splitOn
-      ? rows.reduce((acc, r, i) => ((r.businessId || null) === ownerId ? acc.add(computed.amounts[i] ?? 0) : acc), new Decimal(0))
-      : total;
-  const cajaOf = (ownerId: string | null) => pockets.find((p) => p.isMain && p.businessId === ownerId);
-  const ownerName = (ownerId: string | null) => businesses.find((b) => b.id === ownerId)?.name ?? "Personal";
-  // Cajas que recibirán dinero (y se repartirán) con la selección actual
-  const receivers: { name: string; amount: Decimal; rules: PocketChoice["rules"] }[] =
+  const ownerId = businessId || null;
+  const ownerName = businesses.find((b) => b.id === ownerId)?.name ?? "Personal";
+  const caja = pockets.find((p) => p.isMain && p.businessId === ownerId);
+  // Caja que recibirá el dinero (y lo repartirá) con la selección actual
+  const receiver =
     pocketId === AUTO_POCKET
-      ? ownerIds.map((id) => ({
-          name: cajaOf(id)?.name ?? `Caja ${ownerName(id)} (se crea)`,
-          amount: ownerTotal(id),
-          rules: cajaOf(id)?.rules ?? [],
-        }))
-      : pockets
-          .filter((p) => p.id === pocketId && p.isMain)
-          .map((p) => ({ name: p.name, amount: total, rules: p.rules }));
+      ? { name: caja?.name ?? `Caja ${ownerName} (se crea)`, rules: caja?.rules ?? [] }
+      : pockets.find((p) => p.id === pocketId && p.isMain);
   const owners = [...new Set(pockets.map((p) => p.ownerName))];
 
   const resetAll = () => {
     if (defaults) return;
     setAmount("");
-    setSplitOn(false);
     setPocketId(AUTO_POCKET);
   };
 
@@ -137,7 +101,6 @@ export function TransactionForm({
       className="grid grid-cols-1 gap-4 sm:grid-cols-2"
     >
       <input type="hidden" name="type" value={type} />
-      <input type="hidden" name="splits" value={splitsJson} />
 
       <div className="col-span-full grid grid-cols-2 gap-1 rounded-xl bg-background p-1">
         {(["EXPENSE", "INCOME"] as const).map((t) => (
@@ -216,95 +179,23 @@ export function TransactionForm({
         <Input name="description" placeholder="Opcional" defaultValue={defaults?.description} maxLength={200} />
       </Field>
 
-      <div className="col-span-full rounded-xl border border-border p-3">
-        <Checkbox
-          checked={splitOn}
-          onCheckedChange={setSplitOn}
-          label="Asignar a negocios / dividir"
-          hint={splitOn ? undefined : "Si no lo marcas, el movimiento cuenta como Personal."}
-        />
-        {splitOn && (
-          <div className="mt-3 flex flex-col gap-2">
-            <div className="flex gap-1 text-xs">
-              {(["percent", "amount"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5",
-                    mode === m ? "border-accent text-accent" : "border-border text-muted",
-                  )}
-                >
-                  {m === "percent" ? "Por %" : "Por monto"}
-                </button>
-              ))}
-            </div>
-            {rows.map((row, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Select
-                  value={row.businessId}
-                  onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, businessId: e.target.value } : r)))}
-                  className="min-w-0 flex-1"
-                >
-                  <option value={PERSONAL}>Personal</option>
-                  {businesses.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  className="w-24 sm:w-28"
-                  inputMode="decimal"
-                  value={row.value}
-                  onChange={(e) => setRows(rows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))}
-                  placeholder={mode === "percent" ? "%" : "0,00"}
-                />
-                <span className="hidden w-28 text-right text-xs text-muted tabular sm:block">
-                  {mode === "percent" ? formatMoney(computed.amounts[i] ?? 0, currency) : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRows(rows.filter((_, j) => j !== i))}
-                  disabled={rows.length === 1}
-                  aria-label="Quitar parte"
-                  className="flex size-10 shrink-0 items-center justify-center rounded-lg text-muted hover:text-negative disabled:opacity-30 sm:size-8"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
+      {businesses.length > 0 && (
+        <Field label="Es de" className="col-span-full">
+          <Select name="businessId" value={businessId} onChange={(e) => setBusinessId(e.target.value)}>
+            <option value="">Personal</option>
+            {businesses.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
             ))}
-            <div className="flex items-center justify-between">
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-10 text-sm sm:h-8 sm:text-xs"
-                onClick={() => setRows([...rows, { businessId: PERSONAL, value: "" }])}
-              >
-                <Plus className="size-3.5" /> Agregar parte
-              </Button>
-              {!computed.ok && total.gt(0) && (
-                <span className="text-xs text-negative">
-                  {mode === "percent"
-                    ? `Faltan ${computed.diff.toFixed(2)}%`
-                    : `Diferencia: ${formatMoney(computed.diff, currency)}`}
-                </span>
-              )}
-            </div>
-            {businesses.length === 0 && (
-              <p className="text-xs text-muted">Crea tus negocios en la sección Negocios para poder asignarlos.</p>
-            )}
-          </div>
-        )}
-      </div>
+          </Select>
+        </Field>
+      )}
 
       <div className="col-span-full flex flex-col gap-2 rounded-xl border border-border p-3">
         <Field label={type === "INCOME" ? "Va al apartado" : "Sale del apartado"}>
           <Select name="pocketId" value={pocketId} onChange={(e) => setPocketId(e.target.value)}>
-            <option value={AUTO_POCKET}>
-              {splitOn ? "La Caja de cada dueño" : `Caja ${ownerName(null)}`} (automático)
-            </option>
+            <option value={AUTO_POCKET}>Caja {ownerName} (automático)</option>
             <option value="">Ninguno: dinero sin asignar</option>
             {owners.map((owner) => (
               <optgroup key={owner} label={owner}>
@@ -322,29 +213,28 @@ export function TransactionForm({
         {type === "EXPENSE" && pocketId === AUTO_POCKET && (
           <p className="text-xs text-muted">Sale de la Caja de su dueño, si ya la tiene.</p>
         )}
-        {type === "INCOME" && receivers.length > 0 && (
+        {type === "INCOME" && receiver && (
           <>
             <Checkbox
               name="distribute"
               defaultChecked={defaults?.distribute ?? true}
               key={defaults ? "edit" : "new"}
-              label="Repartir según el presupuesto"
+              label="Repartir en los apartados"
             />
             <ul className="flex flex-col gap-1 text-xs text-muted">
-              {receivers.map((r) => (
-                <li key={r.name}>
-                  <span className="font-medium text-foreground">{r.name}</span>
-                  {r.rules.length === 0
-                    ? " · sin partidas: todo se queda en la Caja"
-                    : r.rules.map((rule) => (
-                        <span key={rule.name} className="block pl-3">
-                          {rule.name} {rule.percent}% → {rule.target}
-                          {r.amount.gt(0) &&
-                            ` · ${formatMoney(r.amount.mul(rule.percent).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN), currency)}`}
-                        </span>
-                      ))}
-                </li>
-              ))}
+              <li>
+                <span className="font-medium text-foreground">{receiver.name}</span>
+                {receiver.rules.length === 0
+                  ? " · sin apartados con %: todo se queda en la Caja"
+                  : receiver.rules.map((rule) => (
+                      <span key={rule.name} className="block pl-3">
+                        {rule.name} {rule.percent === null ? "(lo que falta del mes)" : `${rule.percent}%`} → {rule.target}
+                        {rule.percent !== null &&
+                          total.gt(0) &&
+                          ` · ${formatMoney(total.mul(rule.percent).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN), currency)}`}
+                      </span>
+                    ))}
+              </li>
             </ul>
           </>
         )}

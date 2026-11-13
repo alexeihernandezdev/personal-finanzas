@@ -25,16 +25,13 @@ describe("transactionSchema", () => {
     const r = transactionSchema.safeParse({ type: "EXPENSE", walletId: "w", amount: "0", date: "2026-11-01" });
     expect(r.success).toBe(false);
   });
-  it("acepta un movimiento con splits", () => {
+  it("acepta un movimiento de un negocio", () => {
     const r = transactionSchema.safeParse({
       type: "INCOME",
       walletId: "w",
       amount: "100,00",
       date: "2026-11-01",
-      splits: [
-        { businessId: "b1", amount: "60" },
-        { businessId: null, amount: "40" },
-      ],
+      businessId: "b1",
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.amount).toBe("100.00");

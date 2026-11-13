@@ -63,7 +63,6 @@ export async function createTransfer(_prev: ActionState, formData: FormData): Pr
           // Parte de la transferencia: se borra con ella
           transferGroupId: groupId,
           ...rate,
-          splits: { create: [{ businessId: null, amount: fee.toString() }] },
         },
       });
     }

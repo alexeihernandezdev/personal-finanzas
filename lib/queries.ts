@@ -90,21 +90,42 @@ export type PocketWithBalance = Awaited<ReturnType<typeof getPockets>>[number];
 
 /**
  * Apartados activos para elegir al registrar un movimiento o un traspaso, con el nombre de su dueño
- * y, si son Cajas, las partidas con las que se reparte lo que les entra.
+ * y, si son Cajas, cómo se reparte lo que les entra (con `rate` se calcula el % de los gastos fijos).
  */
-export async function getPocketChoices(userId: string) {
-  const [pockets, buckets] = await Promise.all([
+export async function getPocketChoices(userId: string, rate?: DecimalLike | null) {
+  const [pockets, businesses] = await Promise.all([
     prisma.pocket.findMany({
       where: { userId, archived: false },
       include: { business: { select: { name: true } } },
       orderBy: [{ isMain: "desc" }, { createdAt: "asc" }],
     }),
-    prisma.budgetBucket.findMany({
-      where: { userId, pocket: { archived: false } },
-      include: { pocket: { select: { name: true } } },
-      orderBy: [{ position: "asc" }, { createdAt: "asc" }],
-    }),
+    prisma.business.findMany({ where: { userId }, select: { id: true, ownerPayPercent: true } }),
   ]);
+  const cajas = pockets.filter((p) => p.isMain);
+  const plans = new Map(
+    await Promise.all(
+      cajas.map(async (c) => [c.id, await getMonthlyPlan(prisma, userId, c.businessId, c.currencyCode, rate)] as const),
+    ),
+  );
+  const rulesOf = (caja: (typeof pockets)[number]) => {
+    const plan = plans.get(caja.id);
+    const rules: { name: string; percent: string | null; target: string }[] = [];
+    if (plan?.fixed.gt(0)) {
+      rules.push({
+        name: "Gastos fijos",
+        percent: plan.income.gt(0) ? Decimal.min(100, plan.fixedWithBuffer.div(plan.income).mul(100)).toDecimalPlaces(2).toString() : null,
+        target: pockets.find((p) => p.isFixedReserve && p.businessId === caja.businessId)?.name ?? "Gastos fijos",
+      });
+    }
+    for (const p of pockets) {
+      if (p.businessId === caja.businessId && !p.isMain && !p.isFixedReserve && p.percent?.gt(0)) {
+        rules.push({ name: p.name, percent: p.percent.toString(), target: p.name });
+      }
+    }
+    const pay = businesses.find((b) => b.id === caja.businessId)?.ownerPayPercent;
+    if (pay?.gt(0)) rules.push({ name: "Sueldo", percent: pay.toString(), target: "Caja Personal" });
+    return rules;
+  };
   return pockets
     .map((p) => ({
       id: p.id,
@@ -114,11 +135,7 @@ export async function getPocketChoices(userId: string) {
       isFixedReserve: p.isFixedReserve,
       businessId: p.businessId,
       ownerName: p.business?.name ?? "Personal",
-      rules: p.isMain
-        ? buckets
-            .filter((b) => b.businessId === p.businessId && b.pocket && b.pocketId !== p.id)
-            .map((b) => ({ name: b.name, percent: b.percent.toString(), target: b.pocket!.name }))
-        : [],
+      rules: p.isMain ? rulesOf(p) : [],
     }))
     .sort((a, b) => Number(a.businessId !== null) - Number(b.businessId !== null));
 }
@@ -157,7 +174,7 @@ export type TransactionFilters = {
 export const transactionInclude = {
   wallet: { select: { id: true, name: true, currencyCode: true, color: true } },
   category: { select: { id: true, name: true, color: true } },
-  splits: { include: { business: { select: { id: true, name: true, color: true } } } },
+  business: { select: { id: true, name: true, color: true } },
   receivable: { select: { id: true, counterparty: true, kind: true } },
   debt: { select: { id: true, counterparty: true, kind: true } },
   recurring: { select: { id: true, name: true } },
@@ -176,10 +193,7 @@ export async function listTransactions(userId: string, filters: TransactionFilte
           : (filters.type as TransactionType);
   }
   if (filters.businessId) {
-    where.splits =
-      filters.businessId === "personal"
-        ? { some: { businessId: null } }
-        : { some: { businessId: filters.businessId } };
+    where.businessId = filters.businessId === "personal" ? null : filters.businessId;
   }
   if (filters.from || filters.to) {
     where.date = {
@@ -217,7 +231,7 @@ export async function getMonthSummary(userId: string, month: string, fallbackRat
     include: {
       wallet: { select: { currencyCode: true } },
       category: { select: { id: true, name: true, color: true } },
-      splits: { include: { business: { select: { id: true, name: true, color: true } } } },
+      business: { select: { id: true, name: true, color: true } },
     },
   });
 
@@ -241,22 +255,16 @@ export async function getMonthSummary(userId: string, month: string, fallbackRat
     cat.total = cat.total.add(usd);
     byCategory.set(catKey, cat);
 
-    // Si no hay splits, todo va a Personal
-    const splits = t.splits.length ? t.splits : [{ businessId: null, amount: t.amount, business: null }];
-    const ratio = dec(t.amount).isZero() ? new Decimal(0) : usd.div(dec(t.amount));
-    for (const s of splits) {
-      const key = s.businessId ?? "personal";
-      const b = byBusiness.get(key) ?? {
-        name: s.business?.name ?? "Personal",
-        color: s.business?.color ?? "#94a3b8",
-        income: new Decimal(0),
-        expense: new Decimal(0),
-      };
-      const part = dec(s.amount).mul(ratio);
-      if (t.type === "INCOME") b.income = b.income.add(part);
-      else b.expense = b.expense.add(part);
-      byBusiness.set(key, b);
-    }
+    const key = t.businessId ?? "personal";
+    const b = byBusiness.get(key) ?? {
+      name: t.business?.name ?? "Personal",
+      color: t.business?.color ?? "#94a3b8",
+      income: new Decimal(0),
+      expense: new Decimal(0),
+    };
+    if (t.type === "INCOME") b.income = b.income.add(usd);
+    else b.expense = b.expense.add(usd);
+    byBusiness.set(key, b);
   }
 
   return {
@@ -279,7 +287,6 @@ export async function getRecurringForMonth(userId: string, month: string) {
       wallet: { select: { id: true, name: true, currencyCode: true } },
       category: { select: { id: true, name: true } },
       business: { select: { id: true, name: true } },
-      pocket: { select: { id: true, name: true, archived: true } },
       transactions: {
         where: { date: { gte: start, lt: end } },
         select: { id: true, date: true, amount: true, wallet: { select: { name: true, currencyCode: true } } },
@@ -317,29 +324,10 @@ export function getRecurringIncome(userId: string) {
   });
 }
 
-/** Partidas del presupuesto de un dueño (`businessId` null = Personal). */
-export function getBudgetBuckets(userId: string, businessId: string | null = null) {
-  return prisma.budgetBucket.findMany({ where: { userId, businessId }, orderBy: [{ position: "asc" }, { createdAt: "asc" }] });
-}
-
-/** Últimos ingresos, para repartirlos entre los apartados del presupuesto. `distributed`: ya se repartió algo. */
-export async function getRecentIncomes(userId: string, opts: { businessId?: string | null; take?: number } = {}) {
-  const items = await prisma.transaction.findMany({
-    where: {
-      userId,
-      type: "INCOME",
-      ...(opts.businessId !== undefined ? { splits: { some: { businessId: opts.businessId } } } : {}),
-    },
-    include: { wallet: { select: { name: true, currencyCode: true } }, _count: { select: { pocketMovements: true } } },
-    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
-    take: opts.take ?? 30,
-  });
-  return items.map(({ _count, ...t }) => ({ ...t, distributed: _count.pocketMovements > 0 }));
-}
-
 /**
- * Presupuesto mensual de un dueño (Personal o un negocio) en la divisa del usuario: sus ingresos fijos
- * activos, sus gastos fijos activos (más el colchón) y sus partidas. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
+ * Plan mensual de un dueño (Personal o un negocio) en la divisa del usuario: sus ingresos fijos activos,
+ * sus gastos fijos activos (más el colchón), sus apartados con porcentaje y, si es un negocio, el sueldo
+ * que pasa a Personal. Convierte con la tasa actual; los montos sin tasa disponible se omiten.
  */
 export async function getBudgetOverview(
   userId: string,
@@ -347,11 +335,19 @@ export async function getBudgetOverview(
   rate: Decimal | null,
   businessId: string | null = null,
 ) {
-  const [plan, buckets] = await Promise.all([
+  const [plan, pockets, business] = await Promise.all([
     getMonthlyPlan(prisma, userId, businessId, displayCurrency, rate),
-    getBudgetBuckets(userId, businessId),
+    prisma.pocket.findMany({
+      where: { userId, businessId, archived: false, isMain: false, isFixedReserve: false, percent: { gt: 0 } },
+      orderBy: { createdAt: "asc" },
+    }),
+    businessId ? prisma.business.findFirst({ where: { id: businessId, userId }, select: { ownerPayPercent: true } }) : null,
   ]);
-  return computeBudget(plan.income, plan.fixed, buckets, plan.bufferPercent);
+  const lines = pockets.map((p) => ({ id: p.id, name: p.name, color: p.color, percent: p.percent ?? 0 }));
+  if (business?.ownerPayPercent?.gt(0)) {
+    lines.push({ id: "owner-pay", name: "Tu sueldo → Personal", color: "#0ea5e9", percent: business.ownerPayPercent });
+  }
+  return computeBudget(plan.income, plan.fixed, lines, plan.bufferPercent);
 }
 
 /** Cuentas por cobrar y préstamos con el monto cobrado hasta ahora (en la divisa del registro). */

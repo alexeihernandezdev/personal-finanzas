@@ -1,19 +1,21 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { PageSkeleton } from "@/components/page-skeleton";
-import { ChevronRight, Star, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, Star, X } from "lucide-react";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/action-form";
 import { PocketFields, pocketKindLabel } from "@/components/pocket-fields";
 import { PocketTransferForm, type TransferDestination } from "@/components/pocket-transfer-form";
-import { Amount, Badge, Card, EmptyState, Field, Input, PageHeader, SectionTitle, Select } from "@/components/ui";
+import { Amount, Badge, Card, EmptyState, Field, Input, OwnerTabs, PageHeader, SectionTitle, Select, StatCard } from "@/components/ui";
+import { formatPercent, SUGGESTED_POCKETS, type BudgetOverview } from "@/lib/budget";
 import { requireUser } from "@/lib/dal";
 import { convert, Decimal, formatMoney } from "@/lib/money";
-import { getBusinesses, getMoneySummary, getPockets, type PocketWithBalance } from "@/lib/queries";
+import { getBudgetOverview, getBusinesses, getMoneySummary, getPockets, type PocketWithBalance } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { cn, formatDate, toISODate, todayISO } from "@/lib/utils";
 import {
   createMainPocket,
   createPocket,
+  createSuggestedPockets,
   deletePocket,
   deletePocketMovement,
   movePocketMoney,
@@ -22,6 +24,7 @@ import {
   transferPocketMoney,
   updatePocket,
 } from "./actions";
+import { EditBufferButton, EditOwnerPayButton } from "./plan-dialogs";
 
 type BusinessOption = { id: string; name: string };
 
@@ -46,6 +49,10 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
     if (p.business && !tabs.some((t) => t.key === p.business!.id)) tabs.push({ key: p.business.id, name: p.business.name });
   }
   const currentTab = tabs.find((t) => t.key === negocio) ?? tabs[0];
+  const tabBusinessId = currentTab.key === "personal" ? null : currentTab.key;
+  const business = businesses.find((b) => b.id === tabBusinessId);
+  const budget = await getBudgetOverview(user.id, cur, rate, tabBusinessId);
+
   const tabPockets = (key: string) => pockets.filter((p) => (p.businessId ?? "personal") === key);
   const reservedIn = (key: string) =>
     tabPockets(key).reduce((acc, p) => {
@@ -57,11 +64,13 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
     }, new Decimal(0));
 
   const inTab = tabPockets(currentTab.key);
-  // La Caja va primero
-  const active = inTab.filter((p) => !p.archived).sort((a, b) => Number(b.isMain) - Number(a.isMain));
+  // Primero la Caja, luego Gastos fijos, los que tienen % y el resto
+  const rank = (p: PocketWithBalance) => (p.isMain ? 0 : p.isFixedReserve ? 1 : p.percent?.gt(0) ? 2 : 3);
+  const active = inTab.filter((p) => !p.archived).sort((a, b) => rank(a) - rank(b));
   const archived = inTab.filter((p) => p.archived);
   const hasCaja = inTab.some((p) => p.isMain);
-  const tabBusinessId = currentTab.key === "personal" ? null : currentTab.key;
+  const hasPercentPockets = active.some((p) => p.percent?.gt(0));
+  const fixedShare = budget.income.isZero() ? null : budget.fixedPercent.add(budget.bufferIncomePercent);
   const destinations: TransferDestination[] = [
     ...pockets.filter((p) => !p.archived && !p.businessId),
     ...pockets.filter((p) => !p.archived && p.businessId),
@@ -75,50 +84,41 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
 
   return (
     <>
-      <PageHeader title="Apartados" description="Separa el dinero que no debes tocar: ahorros, metas y reservas" />
+      <PageHeader title="Apartados" description="Cómo se reparte tu dinero: gastos fijos, ocio, ahorro, inversión…" />
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Card>
-          <p className="text-sm text-muted">En cuentas</p>
-          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(total, cur)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted">Apartado</p>
-          <p className="mt-1 truncate text-xl font-semibold tabular sm:text-2xl">{formatMoney(reserved, cur)}</p>
-        </Card>
-        <Card className="col-span-2 sm:col-span-1">
-          <p className="text-sm text-muted">Disponible para usar</p>
-          <p className="mt-1 truncate text-xl font-semibold sm:text-2xl">
-            <Amount value={formatMoney(available, cur)} />
-          </p>
-        </Card>
+        <StatCard label="En cuentas" value={formatMoney(total, cur)} />
+        <StatCard label="Apartado" value={formatMoney(reserved, cur)} />
+        <StatCard
+          label="Disponible para usar"
+          value={<Amount value={formatMoney(available, cur)} />}
+          className="col-span-2 sm:col-span-1"
+        />
       </div>
       {available.isNegative() && (
         <p role="alert" className="mb-6 rounded-lg bg-negative/10 px-4 py-3 text-sm text-negative">
           Gastaste dinero apartado. Libera parte de un apartado o repón el saldo de tus cuentas.
         </p>
       )}
+      <OwnerTabs
+        tabs={tabs.map((t) => ({ ...t, extra: formatMoney(reservedIn(t.key), cur) }))}
+        current={currentTab.key}
+        href={(key) => `/apartados?negocio=${key}`}
+        label="Dueño del dinero"
+      />
+      <PlanCard
+        budget={budget}
+        currency={cur}
+        ownerName={currentTab.name}
+        business={business ? { id: business.id, ownerPayPercent: business.ownerPayPercent?.toString() ?? "" } : null}
+        bufferPercent={budget.bufferPercent.toString()}
+      />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex flex-col gap-6">
-          <nav className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 sm:mx-0 sm:flex-wrap sm:px-0" aria-label="Dueño del dinero">
-            {tabs.map((t) => (
-              <Link
-                key={t.key}
-                href={`/apartados?negocio=${t.key}`}
-                className={cn(
-                  "flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm whitespace-nowrap transition-colors",
-                  currentTab.key === t.key ? "border-transparent bg-foreground font-medium text-background" : "border-border bg-surface text-muted hover:text-foreground",
-                )}
-              >
-                {t.name}
-                <span className="text-xs tabular opacity-80">{formatMoney(reservedIn(t.key), cur)}</span>
-              </Link>
-            ))}
-          </nav>
           {!hasCaja && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-border p-4 text-sm">
               <p className="text-muted">
                 La <span className="font-medium text-foreground">Caja {currentTab.name}</span> recibe los ingresos de{" "}
-                {tabBusinessId ? "este negocio" : "lo personal"} y los reparte según su presupuesto. Se crea sola con el
+                {tabBusinessId ? "este negocio" : "lo personal"} y los reparte entre sus apartados. Se crea sola con el
                 primer ingreso.
               </p>
               <ConfirmButton action={createMainPocket.bind(null, tabBusinessId)} variant="secondary" className="h-10 px-3 text-sm sm:h-8 sm:text-xs">
@@ -141,6 +141,7 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
                   <PocketCard
                     key={p.id}
                     pocket={p}
+                    fixedShare={fixedShare}
                     businesses={businessOptions}
                     destinations={destinations.filter((d) => d.id !== p.id)}
                   />
@@ -153,36 +154,216 @@ async function ApartadosPageContent({ searchParams }: PageProps<"/apartados">) {
               <SectionTitle>Archivados</SectionTitle>
               <div className="flex flex-col gap-3 opacity-70">
                 {archived.map((p) => (
-                  <PocketCard key={p.id} pocket={p} businesses={businessOptions} destinations={[]} />
+                  <PocketCard key={p.id} pocket={p} fixedShare={fixedShare} businesses={businessOptions} destinations={[]} />
                 ))}
               </div>
             </section>
           )}
         </div>
-        <Card className="h-fit">
-          <h2 className="mb-4 font-semibold">Nuevo apartado</h2>
-          <ActionForm key={currentTab.key} action={createPocket} className="flex flex-col gap-3">
-            <PocketFields
-              businesses={businessOptions}
-              defaultBusinessId={currentTab.key === "personal" ? "" : currentTab.key}
-            />
-            <Field label="Apartar ahora" hint="Opcional: sale de lo disponible para usar">
-              <Input name="initialAmount" inputMode="decimal" placeholder="0,00" />
-            </Field>
-            <SubmitButton>Crear apartado</SubmitButton>
-          </ActionForm>
-        </Card>
+        <div className="flex flex-col gap-6">
+          <Card className="h-fit">
+            <h2 className="mb-1 font-semibold">Nuevo apartado</h2>
+            <p className="mb-4 text-xs text-muted">
+              Con un % se llena solo cada vez que entra dinero a la Caja. Sin %, lo llenas a mano.
+              {!budget.income.isZero() && budget.freePercent.gt(0) && <> Te queda {formatPercent(budget.freePercent)} libre.</>}
+            </p>
+            <ActionForm key={currentTab.key} action={createPocket} className="flex flex-col gap-3">
+              <PocketFields
+                businesses={businessOptions}
+                defaultBusinessId={currentTab.key === "personal" ? "" : currentTab.key}
+              />
+              <Field label="Apartar ahora" hint="Opcional: sale de lo disponible para usar">
+                <Input name="initialAmount" inputMode="decimal" placeholder="0,00" />
+              </Field>
+              <SubmitButton>Crear apartado</SubmitButton>
+            </ActionForm>
+          </Card>
+          {!hasPercentPockets && (
+            <Card className="h-fit">
+              <p className="mb-3 text-sm text-muted">
+                ¿No sabes por dónde empezar? Prueba con{" "}
+                {SUGGESTED_POCKETS.map((b) => `${b.name} ${b.percent}%`).join(", ")} y ajústalo a tu medida.
+              </p>
+              <ConfirmButton action={createSuggestedPockets.bind(null, tabBusinessId)} variant="secondary" className="w-full">
+                Usar sugerencia
+              </ConfirmButton>
+            </Card>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
+/**
+ * Plan del mes del dueño: qué % de su ingreso fijo se llevan los gastos fijos, cada apartado y (si es
+ * un negocio) tu sueldo, y cuánto queda libre en la Caja.
+ */
+function PlanCard({
+  budget,
+  currency: cur,
+  ownerName,
+  business,
+  bufferPercent,
+}: {
+  budget: BudgetOverview;
+  currency: string;
+  ownerName: string;
+  business: { id: string; ownerPayPercent: string } | null;
+  bufferPercent: string;
+}) {
+  const noIncome = budget.income.isZero();
+  const pct = (value: Decimal) => (noIncome ? "—" : formatPercent(value));
+  const pockets = budget.pockets.filter((p) => p.id !== "owner-pay");
+  const ownerPay = budget.pockets.find((p) => p.id === "owner-pay");
+
+  return (
+    <Card className="mb-6">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">Plan del mes · {ownerName}</h2>
+        <p className="text-sm text-muted">
+          Ingreso fijo <span className="font-medium text-positive tabular">{formatMoney(budget.income, cur)}</span> ·{" "}
+          <Link href="/ingresos-fijos" className="text-accent hover:underline">
+            Administrar
+          </Link>
+        </p>
+      </div>
+      <DistributionBar budget={budget} />
+      {budget.overBudget && !noIncome && (
+        <p className="mt-3 rounded-lg bg-negative/10 px-3 py-2 text-sm text-negative">
+          Tus gastos fijos{budget.buffer.gt(0) && ", el colchón"} y apartados suman{" "}
+          {formatPercent(new Decimal(100).sub(budget.freePercent))} de tu ingreso fijo: te faltan{" "}
+          {formatMoney(budget.free.neg(), cur)} al mes. Al repartir, los apartados se reducen en proporción.
+        </p>
+      )}
+      <ul className="mt-3 divide-y divide-border">
+        <PlanRow
+          dot="bg-muted"
+          name="Gastos fijos"
+          detail={
+            <Link href="/gastos-fijos" className="hover:underline">
+              {noIncome ? "Sin ingreso fijo: se aparta lo que falta del mes" : "Su % real de tu ingreso fijo"}
+            </Link>
+          }
+          percent={pct(budget.fixedPercent)}
+          amount={formatMoney(budget.fixed, cur)}
+        />
+        <PlanRow
+          dot="bg-muted/50"
+          name="Colchón"
+          detail={`${formatPercent(budget.bufferPercent)} sobre tus gastos fijos para imprevistos`}
+          percent={pct(budget.bufferIncomePercent)}
+          amount={formatMoney(budget.buffer, cur)}
+          action={<EditBufferButton percent={bufferPercent} />}
+        />
+        {pockets.map((p) => (
+          <PlanRow key={p.id} color={p.color} name={p.name} percent={formatPercent(p.percent)} amount={formatMoney(p.amount, cur)} />
+        ))}
+        {business && (
+          <PlanRow
+            color="#0ea5e9"
+            name="Tu sueldo"
+            detail={ownerPay ? "Pasa a tu Caja Personal y se reparte allí" : "Sin sueldo: el dinero se queda en el negocio"}
+            percent={ownerPay ? formatPercent(ownerPay.percent) : "—"}
+            amount={ownerPay ? formatMoney(ownerPay.amount, cur) : ""}
+            action={<EditOwnerPayButton businessId={business.id} percent={business.ownerPayPercent} />}
+          />
+        )}
+        <PlanRow
+          dot="border border-dashed border-muted"
+          name="Libre"
+          detail="Se queda en la Caja"
+          percent={pct(budget.freePercent)}
+          amount={formatMoney(budget.free, cur)}
+          negative={budget.overBudget}
+        />
+      </ul>
+      <details className="group mt-3 text-sm">
+        <summary className="flex min-h-10 items-center gap-2 text-muted hover:text-foreground">
+          <Info className="size-4 text-accent" />
+          ¿Cómo se reparte el dinero?
+          <ChevronDown className="size-4 transition-transform group-open:rotate-180" />
+        </summary>
+        <p className="mt-1 text-pretty text-muted">
+          Cada ingreso de {ownerName} entra a su Caja y se reparte al momento: Gastos fijos se lleva el % que tus gastos
+          fijos (con el colchón) son de tu ingreso fijo; si no tienes ingreso fijo, lo que le falta para cubrir el mes. Cada
+          apartado se lleva su %{business && " y tu sueldo pasa a Personal"}. Lo que sobra se queda libre en la Caja. Los
+          gastos fijos anuales o trimestrales cuentan su parte de cada mes.
+        </p>
+      </details>
+    </Card>
+  );
+}
+
+function PlanRow({
+  dot,
+  color,
+  name,
+  detail,
+  percent,
+  amount,
+  action,
+  negative,
+}: {
+  dot?: string;
+  color?: string;
+  name: string;
+  detail?: React.ReactNode;
+  percent: string;
+  amount: string;
+  action?: React.ReactNode;
+  negative?: boolean;
+}) {
+  return (
+    <li className="flex items-center gap-3 py-2.5 text-sm">
+      <span className={cn("size-3 shrink-0 rounded-full", dot)} style={color ? { background: color } : undefined} />
+      <span className="min-w-0 flex-1 font-medium">
+        <span className="block truncate">{name}</span>
+        {detail && <span className="block truncate text-xs font-normal text-muted">{detail}</span>}
+      </span>
+      <span className={cn("w-12 shrink-0 text-right tabular sm:w-16", negative ? "text-negative" : "text-muted")}>{percent}</span>
+      <span className={cn("shrink-0 text-right tabular sm:w-28", negative && "text-negative")}>{amount}</span>
+      <span className="-mr-2 flex w-10 shrink-0 justify-end sm:mr-0">{action}</span>
+    </li>
+  );
+}
+
+/** Barra apilada: gastos fijos + colchón + apartados + libre. Si se pasa del 100%, se escala al total asignado. */
+function DistributionBar({ budget }: { budget: BudgetOverview }) {
+  if (budget.income.isZero()) {
+    return <div className="h-4 rounded-full bg-border" />;
+  }
+  const scale = Decimal.max(100, new Decimal(100).sub(budget.freePercent));
+  const width = (p: Decimal) => `${p.div(scale).mul(100).toNumber()}%`;
+  const segments = [
+    { key: "fixed", label: "Gastos fijos", percent: budget.fixedPercent, className: "bg-muted" },
+    { key: "buffer", label: "Colchón", percent: budget.bufferIncomePercent, className: "bg-muted/50" },
+    ...budget.pockets.map((b) => ({ key: b.id, label: b.name, percent: b.percent, color: b.color })),
+  ].filter((s) => s.percent.gt(0));
+
+  return (
+    <div className="flex h-4 overflow-hidden rounded-full bg-border" role="img" aria-label="Reparto del ingreso fijo">
+      {segments.map((s) => (
+        <div
+          key={s.key}
+          title={`${s.label}: ${formatPercent(s.percent)}`}
+          className={cn("h-full border-r-2 border-surface last:border-r-0", "className" in s && s.className)}
+          style={{ width: width(s.percent), ...("color" in s ? { background: s.color } : {}) }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function PocketCard({
   pocket: p,
+  fixedShare,
   businesses,
   destinations,
 }: {
   pocket: PocketWithBalance;
+  /** % del ingreso fijo que se lleva Gastos fijos (con colchón); null sin ingreso fijo */
+  fixedShare: Decimal | null;
   businesses: BusinessOption[];
   destinations: TransferDestination[];
 }) {
@@ -190,6 +371,15 @@ function PocketCard({
   const target = p.targetAmount ? new Decimal(p.targetAmount.toString()) : null;
   const pct = target && target.gt(0) ? Math.min(100, p.balance.div(target).mul(100).toNumber()) : null;
   const today = todayISO();
+  const rule = p.isMain
+    ? "Recibe los ingresos y se queda lo que sobra"
+    : p.isFixedReserve
+      ? fixedShare
+        ? `Se lleva el ${formatPercent(fixedShare)} de cada ingreso para tus gastos fijos`
+        : "Se lleva lo que falta para los gastos fijos del mes"
+      : p.percent?.gt(0)
+        ? `Se lleva el ${formatPercent(p.percent)} de cada ingreso`
+        : pocketKindLabel(p.kind);
 
   return (
     <Card className="relative overflow-hidden">
@@ -199,9 +389,11 @@ function PocketCard({
           <p className="flex items-center gap-2 font-medium">
             {p.name}
             {p.isMain && <Badge color="brand">Caja</Badge>}
+            {p.isFixedReserve && <Badge>Gastos fijos</Badge>}
+            {!p.isMain && !p.isFixedReserve && p.percent?.gt(0) && <Badge color="brand">{formatPercent(p.percent)}</Badge>}
           </p>
           <p className="text-xs text-muted">
-            {p.isMain ? "Recibe los ingresos y los reparte según el presupuesto" : pocketKindLabel(p.kind)} · {currency}
+            {rule} · {currency}
             {p.targetDate && ` · para el ${formatDate(p.targetDate)}`}
           </p>
         </div>
@@ -307,7 +499,8 @@ function PocketCard({
             <PocketFields
               businesses={businesses}
               currencyLocked={!p.balance.isZero()}
-              ownerLocked={p.isMain}
+              ownerLocked={p.isMain || p.isFixedReserve}
+              percentHint={p.isMain || p.isFixedReserve ? rule : undefined}
               defaults={{
                 name: p.name,
                 kind: p.kind,
@@ -316,6 +509,7 @@ function PocketCard({
                 targetAmount: target ? target.toFixed(2) : "",
                 targetDate: p.targetDate ? toISODate(p.targetDate) : "",
                 color: p.color,
+                percent: p.percent?.toString() ?? "",
               }}
             />
             <SubmitButton className="sm:col-span-2">Guardar cambios</SubmitButton>

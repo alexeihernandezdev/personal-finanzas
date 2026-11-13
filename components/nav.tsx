@@ -8,7 +8,6 @@ import {
   Banknote,
   BarChart3,
   CalendarClock,
-  ChartPie,
   HandCoins,
   LayoutDashboard,
   LayoutGrid,
@@ -42,7 +41,6 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Planificación",
     items: [
-      { href: "/presupuesto", label: "Presupuesto", icon: ChartPie },
       { href: "/ingresos-fijos", label: "Ingresos fijos", icon: Banknote },
       { href: "/gastos-fijos", label: "Gastos fijos", icon: CalendarClock },
       { href: "/por-cobrar", label: "Por cobrar", icon: HandCoins },

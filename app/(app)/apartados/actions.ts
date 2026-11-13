@@ -7,12 +7,13 @@ import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import type { RateSource } from "@/lib/generated/prisma/client";
 import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
+import { SUGGESTED_POCKETS } from "@/lib/budget";
 import { dec, Decimal, formatMoney, type DecimalLike } from "@/lib/money";
 import { allocateToPocket, ensureMainPocket, withdrawFromPocket } from "@/lib/pockets";
 import { getMoneySummary, getPockets } from "@/lib/queries";
 import { getCurrentRates, pickRate } from "@/lib/rates";
 import { parseISODate, todayISO } from "@/lib/utils";
-import { pocketMovementSchema, pocketSchema, pocketTransferSchema } from "@/lib/validators";
+import { fixedBufferSchema, ownerPaySchema, pocketMovementSchema, pocketSchema, pocketTransferSchema } from "@/lib/validators";
 
 /** Lo apartado sale del dinero libre de todas las cuentas; avisa si no alcanza. */
 async function checkAvailable(user: { id: string; preferredRateSource: RateSource }, amount: DecimalLike, currency: string) {
@@ -20,6 +21,31 @@ async function checkAvailable(user: { id: string; preferredRateSource: RateSourc
   const { available } = await getMoneySummary(user.id, currency, rate);
   if (dec(amount).gt(available)) return fail(`Solo tienes ${formatMoney(available, currency)} disponibles para apartar`);
   return null;
+}
+
+/**
+ * Lo que entra a la Caja de un dueño se reparte entre sus apartados con % (y el sueldo si es un
+ * negocio): entre todos no pueden pasar del 100%.
+ */
+async function exceedsTotal(userId: string, businessId: string | null, percent: string | null, exceptPocketId?: string) {
+  if (!percent) return null;
+  const [others, business] = await Promise.all([
+    prisma.pocket.aggregate({
+      where: {
+        userId,
+        businessId,
+        archived: false,
+        isMain: false,
+        isFixedReserve: false,
+        ...(exceptPocketId ? { id: { not: exceptPocketId } } : {}),
+      },
+      _sum: { percent: true },
+    }),
+    businessId ? prisma.business.findFirst({ where: { id: businessId, userId }, select: { ownerPayPercent: true } }) : null,
+  ]);
+  const used = dec(others._sum.percent).add(dec(business?.ownerPayPercent));
+  if (used.add(percent).lte(100)) return null;
+  return fail(`Los apartados de este dueño ya suman ${used.toString()}%: te queda ${Decimal.max(0, new Decimal(100).sub(used)).toString()}%`);
 }
 
 export async function createPocket(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -33,6 +59,8 @@ export async function createPocket(_prev: ActionState, formData: FormData): Prom
     if (e instanceof OwnershipError) return fail("Negocio inválido");
     throw e;
   }
+  const over = await exceedsTotal(user.id, p.businessId ?? null, p.percent);
+  if (over) return over;
   if (initialAmount) {
     const error = await checkAvailable(user, initialAmount, p.currencyCode);
     if (error) return error;
@@ -44,6 +72,7 @@ export async function createPocket(_prev: ActionState, formData: FormData): Prom
       name: p.name,
       kind: p.kind,
       businessId: p.businessId ?? null,
+      percent: p.percent,
       targetAmount: p.targetAmount ?? null,
       targetDate: p.targetDate ? parseISODate(p.targetDate) : null,
       ...(p.color ? { color: p.color } : {}),
@@ -72,14 +101,20 @@ export async function updatePocket(id: string, _prev: ActionState, formData: For
   if (p.currencyCode !== pocket.currencyCode && !pocket.balance.isZero()) {
     return fail("Libera el dinero del apartado antes de cambiarle la moneda");
   }
+  // La Caja (lo que sobra) y Gastos fijos (según los gastos fijos) no tienen % propio
+  const businessId = pocket.isMain || pocket.isFixedReserve ? pocket.businessId : (p.businessId ?? null);
+  const percent = pocket.isMain || pocket.isFixedReserve ? null : p.percent;
+  const over = await exceedsTotal(user.id, businessId, percent, id);
+  if (over) return over;
   await prisma.pocket.update({
     where: { id },
     data: {
       currencyCode: p.currencyCode,
       name: p.name,
       kind: p.kind,
-      // La Caja siempre es del mismo dueño
-      businessId: pocket.isMain ? pocket.businessId : (p.businessId ?? null),
+      // La Caja y Gastos fijos siempre son del mismo dueño
+      businessId,
+      percent,
       targetAmount: p.targetAmount ?? null,
       targetDate: p.targetDate ? parseISODate(p.targetDate) : null,
       ...(p.color ? { color: p.color } : {}),
@@ -135,7 +170,7 @@ export async function deletePocketMovement(id: string) {
 /**
  * Pasa dinero de un apartado a otro: un monto fijo o un % del saldo o de una entrada concreta del
  * apartado (p. ej. el 20% del ingreso de 300 de un negocio a la Caja Personal). Si el destino es una
- * Caja y se pide, se reparte con su presupuesto.
+ * Caja y se pide, se reparte entre sus apartados.
  */
 export async function transferPocketMoney(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -226,4 +261,67 @@ export async function deletePocket(id: string) {
   if (!pocket || (pocket.isMain && !pocket.balance.isZero())) return;
   await prisma.pocket.delete({ where: { id } });
   revalidatePath("/", "layout");
+}
+
+/** Valida que el dueño que llega del cliente sea Personal (null) o un negocio del usuario. */
+async function ownedBusiness(userId: string, businessId: string | null) {
+  try {
+    await assertOwned(userId, { businessIds: [businessId] });
+    return true;
+  } catch (e) {
+    if (e instanceof OwnershipError) return false;
+    throw e;
+  }
+}
+
+/** Crea los apartados sugeridos (Ahorro, Inversión, Ocio) de un dueño si aún no tiene ninguno con %. */
+export async function createSuggestedPockets(businessId: string | null) {
+  const user = await requireUser();
+  if (!(await ownedBusiness(user.id, businessId))) return;
+  const existing = await prisma.pocket.count({ where: { userId: user.id, businessId, archived: false, percent: { gt: 0 } } });
+  if (existing) return;
+  await prisma.pocket.createMany({
+    data: SUGGESTED_POCKETS.map((p) => ({
+      userId: user.id,
+      businessId,
+      currencyCode: user.displayCurrency,
+      name: p.name,
+      percent: p.percent,
+      color: p.color,
+    })),
+  });
+  revalidatePath("/", "layout");
+}
+
+/** Sueldo del dueño de un negocio: % de cada ingreso del negocio que pasa a la Caja Personal. */
+export async function updateOwnerPay(businessId: string, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = ownerPaySchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  const business = await prisma.business.findFirst({ where: { id: businessId, userId: user.id } });
+  if (!business) return fail("Negocio no encontrado");
+  const { percent } = parsed.data;
+  if (percent) {
+    const others = await prisma.pocket.aggregate({
+      where: { userId: user.id, businessId, archived: false, isMain: false, isFixedReserve: false },
+      _sum: { percent: true },
+    });
+    const used = dec(others._sum.percent);
+    if (used.add(percent).gt(100)) {
+      return fail(`Los apartados de este negocio ya suman ${used.toString()}%: te queda ${Decimal.max(0, new Decimal(100).sub(used)).toString()}%`);
+    }
+  }
+  await prisma.business.update({ where: { id: businessId }, data: { ownerPayPercent: percent } });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Colchón sobre los gastos fijos (% de su total). */
+export async function updateFixedBuffer(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  const user = await requireUser();
+  const parsed = fixedBufferSchema.safeParse(formObject(formData));
+  if (!parsed.success) return zodError(parsed.error);
+  await prisma.user.update({ where: { id: user.id }, data: { fixedBufferPercent: parsed.data.percent } });
+  revalidatePath("/", "layout");
+  return { ok: true };
 }

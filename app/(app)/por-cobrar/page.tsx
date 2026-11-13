@@ -143,8 +143,8 @@ async function PorCobrarPageContent({ searchParams }: PageProps<"/por-cobrar">) 
                             <Checkbox
                               name="distribute"
                               defaultChecked
-                              label="Repartir según el presupuesto"
-                              title="Si entra a una Caja, se reparte entre sus apartados según el presupuesto"
+                              label="Repartir en los apartados"
+                              title="Si entra a una Caja, se reparte entre sus apartados con %"
                               className="col-span-2"
                             />
                           )}

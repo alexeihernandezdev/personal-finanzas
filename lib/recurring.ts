@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db";
 import { dueDateInMonth, isDueInMonth } from "@/lib/budget";
+import { findFixedReservePocket } from "@/lib/fixed-reserve";
 import { convert, type DecimalLike } from "@/lib/money";
 import { applyTransactionToPockets, AUTO_POCKET } from "@/lib/pockets";
 import { getRatesForDates } from "@/lib/rates";
@@ -16,7 +17,8 @@ type RecurringLike = { id: string; userId: string; name: string; categoryId: str
 /**
  * Registra el pago de un gasto fijo como un gasto en la cuenta, convirtiendo el monto a la divisa
  * de la cuenta con la tasa BCV de la fecha del pago, y lo saca del apartado `pocketId`
- * ("auto" = Caja de su dueño; vacío = ninguno). Lanza un error si hace falta tasa y no hay.
+ * ("auto" = Caja de su dueño; vacío = ninguno; sin indicar = el apartado "Gastos fijos" de su dueño,
+ * o su Caja si no lo tiene). Lanza un error si hace falta tasa y no hay.
  */
 export async function recordRecurringPayment(
   r: RecurringLike,
@@ -41,9 +43,10 @@ export async function recordRecurringPayment(
         recurringId: r.id,
         rateVesPerUsd: rate?.toString() ?? null,
         rateSource: rate ? PAYMENT_RATE_SOURCE : null,
-        splits: { create: [{ businessId: r.businessId, amount: walletAmount }] },
+        businessId: r.businessId,
       },
     });
+    const from = pocketId ?? (await findFixedReservePocket(tx, r.userId, r.businessId))?.id ?? AUTO_POCKET;
     await applyTransactionToPockets(tx, {
       userId: r.userId,
       transactionId: created.id,
@@ -52,8 +55,8 @@ export async function recordRecurringPayment(
       currency: wallet.currencyCode,
       date,
       label: r.name,
-      splits: [{ businessId: r.businessId, amount: walletAmount }],
-      pocketId,
+      businessId: r.businessId,
+      pocketId: from,
       distribute: false,
       rate,
       cajaCurrency: wallet.currencyCode,
@@ -96,8 +99,8 @@ export async function processAutoPayments(userId?: string) {
       // Aún no vence, o venció antes de crear el gasto fijo (ese mes ya se habría pagado aparte)
       if (due > today || due < createdDay.format(r.createdAt)) continue;
       try {
-        // Sale de su reserva de gastos fijos (o de la Caja de su dueño)
-        await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate, r.pocketId ?? AUTO_POCKET);
+        // Sale del apartado "Gastos fijos" de su dueño (o de su Caja)
+        await recordRecurringPayment(r, r.wallet, r.amount, r.currencyCode, dueDate);
         created++;
       } catch (e) {
         // Sin tasa para convertir: se reintenta en la próxima ejecución. Cualquier otro error se registra

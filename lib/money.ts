@@ -46,28 +46,6 @@ export function formatMoney(amount: DecimalLike, currency: string, opts?: { sign
   return `${sign}${SYMBOLS[currency] ?? currency} ${formatted}`;
 }
 
-/**
- * Valida que los montos de una división sumen exactamente el total.
- */
-export function splitsMatchTotal(total: DecimalLike, splits: DecimalLike[]): boolean {
-  const sum = splits.reduce<Decimal>((acc, s) => acc.add(dec(s)), new Decimal(0));
-  return sum.toDecimalPlaces(2).eq(dec(total).toDecimalPlaces(2));
-}
-
-/**
- * Reparte un total en montos según porcentajes, ajustando el redondeo en la última parte
- * para que la suma sea exacta.
- */
-export function splitByPercent(total: DecimalLike, percents: DecimalLike[]): Decimal[] {
-  const t = dec(total);
-  const parts = percents.map((p) => t.mul(dec(p)).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN));
-  if (parts.length) {
-    const rest = t.sub(parts.reduce((a, b) => a.add(b), new Decimal(0)));
-    parts[parts.length - 1] = parts[parts.length - 1].add(rest);
-  }
-  return parts;
-}
-
 export const INFLOW_TYPES = ["INCOME", "TRANSFER_IN", "LOAN_REPAYMENT", "LOAN_IN", "ADJUSTMENT_IN"] as const;
 export const OUTFLOW_TYPES = ["EXPENSE", "TRANSFER_OUT", "LOAN_OUT", "DEBT_PAYMENT", "ADJUSTMENT_OUT"] as const;
 

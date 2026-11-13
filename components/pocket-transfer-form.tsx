@@ -117,7 +117,7 @@ export function PocketTransferForm({
         </p>
       )}
       {to?.isMain && (
-        <Checkbox name="distribute" defaultChecked label={`Repartir en ${to.name} según su presupuesto`} />
+        <Checkbox name="distribute" defaultChecked label={`Repartir lo que entra a ${to.name} en sus apartados`} />
       )}
       <SubmitButton variant="secondary">Pasar</SubmitButton>
     </ActionForm>

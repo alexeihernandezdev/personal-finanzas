@@ -5,27 +5,13 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
 import { fail, formObject, zodError, type ActionState } from "@/lib/action";
-import { FIXED_RESERVE, isDueInMonth } from "@/lib/budget";
+import { isDueInMonth } from "@/lib/budget";
 import { ensureFixedReservePocket } from "@/lib/fixed-reserve";
 import { assertOwned, OwnershipError } from "@/lib/guards";
 import { PocketError } from "@/lib/pockets";
 import { processAutoPayments, recordRecurringPayment } from "@/lib/recurring";
 import { formatMonth, monthRange, parseISODate } from "@/lib/utils";
 import { amount, currencyCode, isoDate, recurringSchema } from "@/lib/validators";
-
-/**
- * Apartado del que se paga un gasto fijo: FIXED_RESERVE usa (o crea) el de "Gastos fijos" de su dueño,
- * vacío = la Caja del dueño. Devuelve `undefined` si el apartado no es del usuario.
- */
-async function resolvePocket(user: { id: string; displayCurrency: string }, raw: string | undefined, businessId: string | null, currency: string) {
-  if (!raw) return null;
-  if (raw === FIXED_RESERVE) {
-    const pocket = await ensureFixedReservePocket(prisma, user.id, businessId, currency || user.displayCurrency);
-    return pocket.id;
-  }
-  const owned = await prisma.pocket.count({ where: { id: raw, userId: user.id, archived: false } });
-  return owned === 1 ? raw : undefined;
-}
 
 export async function createRecurring(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await requireUser();
@@ -38,8 +24,8 @@ export async function createRecurring(_prev: ActionState, formData: FormData): P
     if (e instanceof OwnershipError) return fail("Cuenta, categoría o negocio inválido");
     throw e;
   }
-  const pocketId = await resolvePocket(user, d.pocketId, d.businessId ?? null, d.currencyCode);
-  if (pocketId === undefined) return fail("Apartado no encontrado");
+  // Se paga del apartado "Gastos fijos" de su dueño, que se llena al repartir sus ingresos
+  await ensureFixedReservePocket(prisma, user.id, d.businessId ?? null, user.displayCurrency);
   await prisma.recurringExpense.create({
     data: {
       userId: user.id,
@@ -53,7 +39,6 @@ export async function createRecurring(_prev: ActionState, formData: FormData): P
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,
-      pocketId,
       autoPay: d.autoPay,
     },
   });
@@ -75,8 +60,7 @@ export async function updateRecurring(id: string, _prev: ActionState, formData: 
     if (e instanceof OwnershipError) return fail("Cuenta, categoría o negocio inválido");
     throw e;
   }
-  const pocketId = await resolvePocket(user, d.pocketId, d.businessId ?? null, d.currencyCode);
-  if (pocketId === undefined) return fail("Apartado no encontrado");
+  await ensureFixedReservePocket(prisma, user.id, d.businessId ?? null, user.displayCurrency);
   // Los pagos ya registrados no cambian; solo aplica a los próximos meses (y al actual si aún no se pagó)
   await prisma.recurringExpense.update({
     where: { id },
@@ -91,7 +75,6 @@ export async function updateRecurring(id: string, _prev: ActionState, formData: 
       walletId: d.walletId ?? null,
       categoryId: d.categoryId ?? null,
       businessId: d.businessId ?? null,
-      pocketId,
       autoPay: d.autoPay,
     },
   });
@@ -118,20 +101,6 @@ export async function toggleAutoPay(id: string) {
   revalidatePath("/", "layout");
 }
 
-/** Asigna el apartado "Gastos fijos" del dueño a sus gastos fijos que se pagan desde la Caja. */
-export async function assignFixedReserveToAll(businessId: string | null) {
-  const user = await requireUser();
-  try {
-    await assertOwned(user.id, { businessIds: [businessId] });
-  } catch (e) {
-    if (e instanceof OwnershipError) return;
-    throw e;
-  }
-  const pocket = await ensureFixedReservePocket(prisma, user.id, businessId, user.displayCurrency);
-  await prisma.recurringExpense.updateMany({ where: { userId: user.id, businessId, pocketId: null }, data: { pocketId: pocket.id } });
-  revalidatePath("/", "layout");
-}
-
 export async function deleteRecurring(id: string) {
   const user = await requireUser();
   // Los pagos ya registrados se conservan (recurringId pasa a null)
@@ -144,7 +113,7 @@ const paySchema = z.object({
   amount: amount(),
   amountCurrency: currencyCode,
   date: isoDate,
-  // Apartado del que sale ("auto" = Caja del dueño; vacío = ninguno)
+  // Apartado del que sale (id; "auto" = Caja del dueño; vacío = ninguno)
   pocketId: z.string().optional(),
 });
 
