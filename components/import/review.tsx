@@ -6,7 +6,7 @@ import type { ImportRowType } from "@/lib/import/normalize";
 import { dec, formatMoney } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { normalizeAmount } from "@/lib/validators";
-import { isTransferType, TYPE_OPTIONS, type Business, type Category, type Pair, type ReviewRow, type Wallet } from "./model";
+import { isTransferType, TYPE_OPTIONS, type Business, type Category, type Ledger, type Pair, type ReviewRow, type Wallet } from "./model";
 
 const dateCls =
   "h-10 w-full min-w-0 rounded-lg bg-primary px-3 text-sm text-primary shadow-xs ring-1 ring-primary outline-hidden ring-inset focus:ring-2 focus:ring-brand max-sm:h-11";
@@ -131,6 +131,8 @@ export function RowCard({
   wallets,
   categories,
   businesses,
+  debts,
+  receivables,
   onChange,
   onLink,
   onRemove,
@@ -141,6 +143,8 @@ export function RowCard({
   wallets: Wallet[];
   categories: Category[];
   businesses: Business[];
+  debts: Ledger[];
+  receivables: Ledger[];
   onChange: (patch: Partial<ReviewRow>) => void;
   onLink: (otherKey: string) => void;
   onRemove: () => void;
@@ -149,6 +153,10 @@ export function RowCard({
   const transfer = isTransferType(row.type);
   const counter = walletOf(wallets, row.counterWalletId);
   const out = row.type === "EXPENSE" || row.type === "TRANSFER_OUT";
+  // Pago de una deuda (gastos) o cobro de algo que te deben (ingresos)
+  const ledgers = row.type === "EXPENSE" ? debts : row.type === "INCOME" ? receivables : [];
+  const linkField = row.type === "EXPENSE" ? "debtId" : "receivableId";
+  const linkedTo = ledgers.find((l) => l.id === (row.type === "EXPENSE" ? row.debtId : row.receivableId));
   // Filas de otra cuenta en sentido contrario con las que se puede emparejar
   const candidates = transfer
     ? rows.filter(
@@ -178,7 +186,7 @@ export function RowCard({
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Select
           value={row.type}
-          onChange={(e) => onChange({ type: e.target.value as ImportRowType, categoryId: "" })}
+          onChange={(e) => onChange({ type: e.target.value as ImportRowType, categoryId: "", debtId: "", receivableId: "" })}
           aria-label="Tipo"
         >
           {TYPE_OPTIONS.map((o) => (
@@ -205,7 +213,25 @@ export function RowCard({
           className="sm:col-span-2"
         />
 
-        {!transfer && (
+        {ledgers.length > 0 && (
+          <Select
+            value={linkedTo?.id ?? ""}
+            onChange={(e) => onChange({ [linkField]: e.target.value })}
+            aria-label={row.type === "EXPENSE" ? "Pago de una deuda" : "Cobro de algo que te deben"}
+          >
+            <option value="">{row.type === "EXPENSE" ? "No es pago de una deuda" : "No es un cobro pendiente"}</option>
+            <optgroup label={row.type === "EXPENSE" ? "Pago de" : "Cobro de"}>
+              {ledgers.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.loan ? "Préstamo · " : ""}
+                  {l.name} · faltan {formatMoney(l.remaining, l.currencyCode)}
+                </option>
+              ))}
+            </optgroup>
+          </Select>
+        )}
+
+        {!transfer && !linkedTo && (
           <>
             <Select value={row.categoryId} onChange={(e) => onChange({ categoryId: e.target.value })} aria-label="Categoría">
               <option value="">Sin categoría</option>
@@ -273,6 +299,13 @@ export function RowCard({
           </>
         )}
       </div>
+      {linkedTo && (
+        <p className="text-xs text-muted">
+          Se registra como {row.type === "EXPENSE" ? "pago" : "cobro"} de <span className="font-medium text-foreground">{linkedTo.name}</span>
+          {linkedTo.loan ? "" : row.type === "EXPENSE" ? " (categoría Pagos de deudas)" : " (categoría Cobros)"}, con su dueño, y
+          descuenta lo pendiente.
+        </p>
+      )}
       {transfer && candidates.length === 0 && !row.counterWalletId && (
         <p className="flex items-center gap-1 text-xs text-muted">
           <Link2 className="size-3.5" />

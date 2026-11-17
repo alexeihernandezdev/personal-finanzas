@@ -6,6 +6,8 @@ import { normalizeAmount } from "@/lib/validators";
 export type Wallet = { id: string; name: string; currencyCode: string };
 export type Category = { id: string; name: string; kind: "INCOME" | "EXPENSE" };
 export type Business = { id: string; name: string };
+/** Deuda o cuenta por cobrar abierta, con lo que falta en su divisa. */
+export type Ledger = { id: string; name: string; loan: boolean; currencyCode: string; remaining: string };
 
 /** Fila en revisión (todo editable). */
 export type ReviewRow = {
@@ -21,6 +23,9 @@ export type ReviewRow = {
   reference: string | null;
   categoryId: string;
   businessId: string;
+  /** Gasto que paga una deuda o ingreso que cobra algo que te deben */
+  debtId: string;
+  receivableId: string;
   /** Transferencia sin pareja: la otra cuenta y, si su divisa es otra, cuánto salió/llegó allí */
   counterWalletId: string;
   counterAmount: string;
@@ -59,6 +64,7 @@ export function buildCommit(
   pairs: Pair[],
   wallets: Wallet[],
   pockets: boolean,
+  ledgers: Ledger[] = [],
 ): { payload: ImportCommit; problems: string[] } {
   const byKey = new Map(rows.map((r) => [r.key, r]));
   const currency = (id: string) => wallets.find((w) => w.id === id)?.currencyCode;
@@ -120,6 +126,8 @@ export function buildCommit(
         description: r.description.slice(0, 200),
         categoryId: r.categoryId || null,
         businessId: r.businessId || null,
+        debtId: r.type === "EXPENSE" && r.debtId ? r.debtId : null,
+        receivableId: r.type === "INCOME" && r.receivableId ? r.receivableId : null,
       });
       continue;
     }
@@ -147,6 +155,21 @@ export function buildCommit(
       date: r.date,
       description: r.description.slice(0, 200),
     });
+  }
+
+  // Lo asociado a cada deuda o cobro no puede pasar de lo que falta (el servidor lo vuelve a revisar
+  // con la tasa del día cuando las divisas son distintas)
+  const usdLike = (c?: string) => (c === "USDT" ? "USD" : c);
+  for (const l of ledgers) {
+    let total = dec(0);
+    for (const i of items) {
+      if (i.kind !== "movement" || (i.debtId !== l.id && i.receivableId !== l.id)) continue;
+      if (usdLike(currency(i.walletId)) !== usdLike(l.currencyCode)) continue;
+      total = total.add(dec(i.amount));
+    }
+    if (total.toDecimalPlaces(2).gt(dec(l.remaining).toDecimalPlaces(2).add("0.01"))) {
+      problems.push(`${l.name}: solo faltan ${dec(l.remaining).toDecimalPlaces(2).toString()} ${l.currencyCode}`);
+    }
   }
 
   return { payload: { pockets, items }, problems };

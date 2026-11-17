@@ -14,7 +14,7 @@ import { Badge, Button, Card, Checkbox, Field, Select } from "@/components/ui";
 import type { ImportHint } from "@/lib/import/normalize";
 import { matchTransfers } from "@/lib/import/match";
 import { cn } from "@/lib/utils";
-import { buildCommit, pairId, type Business, type Category, type Pair, type ReviewRow, type Wallet } from "./model";
+import { buildCommit, pairId, type Business, type Category, type Ledger, type Pair, type ReviewRow, type Wallet } from "./model";
 import { PairCard, RowCard, SuggestionCard } from "./review";
 
 type Job = { id: string; name: string; state: "uploading" | "scanning" | "done" | "error"; message?: string };
@@ -34,7 +34,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let seq = 0;
 const nextKey = () => `r${Date.now().toString(36)}${(seq++).toString(36)}`;
 
-export function ImportWizard({ wallets, categories, businesses }: { wallets: Wallet[]; categories: Category[]; businesses: Business[] }) {
+export function ImportWizard({
+  wallets,
+  categories,
+  businesses,
+  debts,
+  receivables,
+}: {
+  wallets: Wallet[];
+  categories: Category[];
+  businesses: Business[];
+  debts: Ledger[];
+  receivables: Ledger[];
+}) {
   // Lote a escanear
   const [walletId, setWalletId] = useState(wallets[0]?.id ?? "");
   const [kind, setKind] = useState<"STATEMENT" | "RECEIPT">("STATEMENT");
@@ -131,6 +143,8 @@ export function ImportWizard({ wallets, categories, businesses }: { wallets: Wal
         reference: r.reference,
         categoryId: "",
         businessId: batch.businessId,
+        debtId: "",
+        receivableId: "",
         counterWalletId: "",
         counterAmount: "",
       }));
@@ -189,7 +203,7 @@ export function ImportWizard({ wallets, categories, businesses }: { wallets: Wal
   const included = rows.filter((r) => r.include).length;
 
   function save() {
-    const { payload, problems } = buildCommit(rows, pairs, wallets, pockets);
+    const { payload, problems } = buildCommit(rows, pairs, wallets, pockets, [...debts, ...receivables]);
     setProblems(problems);
     if (problems.length) return;
     startSaving(async () => {
@@ -332,6 +346,8 @@ export function ImportWizard({ wallets, categories, businesses }: { wallets: Wal
               wallets={wallets}
               categories={categories}
               businesses={businesses}
+              debts={debts}
+              receivables={receivables}
               onChange={(patch) => patchRow(r.key, patch)}
               onLink={(other) => linkRows(r.key, other)}
               onRemove={() => {

@@ -7,9 +7,10 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { recomputeDebtStatus } from "@/lib/debts";
 import { getDebtPaymentCategoryId } from "@/lib/defaults";
 import { assertOwned, OwnershipError, rateForDate } from "@/lib/guards";
-import { convert, dec, formatMoney, type DecimalLike } from "@/lib/money";
+import { convert, dec, type DecimalLike } from "@/lib/money";
 import { currentFallbackRate, paidAmount } from "@/lib/queries";
 import { applyTransactionToPockets, pocketFailure, pocketOfTransaction, revertTransactionPockets } from "@/lib/pockets";
+import { exceedsRemaining, insertDebtPayment } from "@/lib/settlements";
 import { parseISODate, todayISO, toISODate } from "@/lib/utils";
 import { debtPaymentSchema, debtSchema, debtTransactionEditSchema } from "@/lib/validators";
 
@@ -117,60 +118,25 @@ export async function registerDebtPayment(_prev: ActionState, formData: FormData
   if (!d || !wallet) return fail("Registro no encontrado");
   if (d.status === "CANCELLED" || d.status === "SETTLED") return fail("Esta deuda ya está cerrada");
 
-  const isLoan = d.kind === "LOAN_RECEIVED";
   const rate = await rateForDate(user.preferredRateSource, p.date);
-  const date = parseISODate(p.date);
 
   // No se puede pagar más de lo que falta
   const remaining = dec(d.amount).sub(paidAmount(d, await currentFallbackRate()));
-  let inRecord;
+  const exceeded = exceedsRemaining(remaining, d.currencyCode, [{ amount: p.amount, walletCurrency: wallet.currencyCode, rate: rate.rateVesPerUsd }], "pagar");
+  if (exceeded) return fail(exceeded);
+  const categoryId = d.kind === "LOAN_RECEIVED" ? null : await getDebtPaymentCategoryId(user.id);
   try {
-    inRecord = convert(p.amount, wallet.currencyCode, d.currencyCode, rate.rateVesPerUsd);
-  } catch {
-    return fail("No hay tasa disponible para comparar el pago con lo pendiente");
-  }
-  if (inRecord.toDecimalPlaces(2).gt(remaining.toDecimalPlaces(2).add("0.01"))) {
-    return fail(`Solo faltan ${formatMoney(remaining, d.currencyCode)} por pagar`);
-  }
-  const categoryId = isLoan ? null : await getDebtPaymentCategoryId(user.id);
-  const description = isLoan
-    ? `Pago de préstamo a ${d.counterparty}`
-    : `Pago: ${d.counterparty}${d.description ? ` · ${d.description}` : ""}`;
-  try {
-    await prisma.$transaction(async (tx) => {
-      const created = await tx.transaction.create({
-        data: {
-          userId: user.id,
-          walletId: wallet.id,
-          // Pagar una deuda por compra es un gasto; devolver un préstamo no (el dinero ya entró como préstamo)
-          type: isLoan ? "DEBT_PAYMENT" : "EXPENSE",
-          amount: p.amount,
-          date,
-          description,
-          debtId: d.id,
-          categoryId,
-          ...rate,
-          businessId: d.businessId,
-        },
-      });
-      // El pago sale del apartado elegido
-      await applyTransactionToPockets(tx, {
-        userId: user.id,
-        transactionId: created.id,
-        type: "EXPENSE",
+    await prisma.$transaction((tx) =>
+      insertDebtPayment(tx, user, d, {
+        walletId: wallet.id,
+        walletCurrency: wallet.currencyCode,
         amount: p.amount,
-        currency: wallet.currencyCode,
-        date,
-        label: d.counterparty,
-        description,
-        businessId: d.businessId,
+        date: p.date,
         pocketId: p.pocketId,
-        distribute: false,
-        rate: rate.rateVesPerUsd,
-        cajaCurrency: user.displayCurrency,
-      });
-      await recomputeDebtStatus(d.id, tx);
-    });
+        rate,
+        categoryId,
+      }),
+    );
   } catch (e) {
     return pocketFailure(e);
   }

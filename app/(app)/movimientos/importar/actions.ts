@@ -6,14 +6,16 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
-import { getFeeCategoryId } from "@/lib/defaults";
+import { getCollectionCategoryId, getDebtPaymentCategoryId, getFeeCategoryId } from "@/lib/defaults";
 import { snapshotRate } from "@/lib/guards";
 import { deliveryUrl, destroyUpload, importFolder, signedUploadParams } from "@/lib/import/cloudinary";
 import { getExtractJob, startExtractJob } from "@/lib/import/llama";
 import { normalizeRows, type ImportRowType, type ParsedRow } from "@/lib/import/normalize";
 import { dec, INFLOW_TYPES } from "@/lib/money";
 import { AUTO_POCKET, pocketFailure } from "@/lib/pockets";
+import { collectedAmount, currentFallbackRate, paidAmount } from "@/lib/queries";
 import { getRatesForDates } from "@/lib/rates";
+import { exceedsRemaining, insertDebtPayment, insertReceivablePayment } from "@/lib/settlements";
 import { impliedRate, insertTransaction, insertTransfer } from "@/lib/transactions";
 import { parseISODate, todayISO } from "@/lib/utils";
 import { importCommitSchema, type ImportCommit } from "@/lib/validators";
@@ -182,10 +184,32 @@ export async function commitImport(payload: ImportCommit): Promise<{ ok: false; 
   const hasFee = transfers.some((t) => dec(t.fee).gt(0));
   const feeCategoryId = hasFee ? await getFeeCategoryId(user.id) : null;
 
+  // Pagos de deudas y cobros: registros abiertos del usuario, sin pasarse de lo que falta
+  const settle = await loadSettlements(user.id, movements, walletById, rates);
+  if (!settle.ok) return { ok: false, error: settle.error };
+
   try {
     await prisma.$transaction(
       async (tx) => {
         for (const m of movements) {
+          const settlement = {
+            walletId: m.walletId,
+            walletCurrency: walletById.get(m.walletId)!.currencyCode,
+            amount: m.amount,
+            date: m.date,
+            pocketId: pockets ? AUTO_POCKET : undefined,
+            rate: rates.get(m.date)!,
+          };
+          if (m.debtId) {
+            const d = settle.debts.get(m.debtId)!;
+            await insertDebtPayment(tx, user, d, { ...settlement, categoryId: settle.debtCategoryId });
+            continue;
+          }
+          if (m.receivableId) {
+            const r = settle.receivables.get(m.receivableId)!;
+            await insertReceivablePayment(tx, user, r, { ...settlement, distribute: pockets, categoryId: settle.collectionCategoryId });
+            continue;
+          }
           await insertTransaction(
             tx,
             user,
@@ -223,4 +247,55 @@ export async function commitImport(payload: ImportCommit): Promise<{ ok: false; 
 
   revalidatePath("/", "layout");
   redirect(movements.some((m) => !m.categoryId) ? "/movimientos?categoria=sin" : "/movimientos");
+}
+
+type Movement = Extract<ImportCommit["items"][number], { kind: "movement" }>;
+
+/**
+ * Deudas y cuentas por cobrar a las que se asocian movimientos: deben ser del usuario, estar
+ * abiertas y lo asociado a cada una no puede pasar de lo que falta.
+ */
+async function loadSettlements(
+  userId: string,
+  movements: Movement[],
+  walletById: Map<string, { currencyCode: string }>,
+  rates: Map<string, Rate>,
+) {
+  const debtIds = [...new Set(movements.map((m) => m.debtId).filter((v): v is string => Boolean(v)))];
+  const receivableIds = [...new Set(movements.map((m) => m.receivableId).filter((v): v is string => Boolean(v)))];
+  const open = { in: ["PENDING" as const, "PARTIAL" as const] };
+  const include = { transactions: { include: { wallet: { select: { currencyCode: true } } } } };
+  const [debts, receivables, fallback, debtCategoryId, collectionCategoryId] = await Promise.all([
+    debtIds.length ? prisma.debt.findMany({ where: { userId, id: { in: debtIds }, status: open }, include }) : [],
+    receivableIds.length ? prisma.receivable.findMany({ where: { userId, id: { in: receivableIds }, status: open }, include }) : [],
+    debtIds.length || receivableIds.length ? currentFallbackRate() : null,
+    debtIds.length ? getDebtPaymentCategoryId(userId) : null,
+    receivableIds.length ? getCollectionCategoryId(userId) : null,
+  ]);
+  if (debts.length !== debtIds.length || receivables.length !== receivableIds.length) {
+    return { ok: false as const, error: "Una deuda o cuenta por cobrar no existe o ya está cerrada" };
+  }
+  const paymentsOf = (pick: (m: Movement) => boolean) =>
+    movements.filter(pick).map((m) => ({
+      amount: m.amount,
+      walletCurrency: walletById.get(m.walletId)!.currencyCode,
+      rate: rates.get(m.date)?.rateVesPerUsd ?? null,
+    }));
+  for (const d of debts) {
+    const remaining = dec(d.amount).sub(paidAmount(d, fallback));
+    const error = exceedsRemaining(remaining, d.currencyCode, paymentsOf((m) => m.debtId === d.id), "pagar");
+    if (error) return { ok: false as const, error: `${d.counterparty}: ${error}` };
+  }
+  for (const r of receivables) {
+    const remaining = dec(r.amount).sub(collectedAmount(r, fallback));
+    const error = exceedsRemaining(remaining, r.currencyCode, paymentsOf((m) => m.receivableId === r.id), "cobrar");
+    if (error) return { ok: false as const, error: `${r.counterparty}: ${error}` };
+  }
+  return {
+    ok: true as const,
+    debts: new Map(debts.map((d) => [d.id, d])),
+    receivables: new Map(receivables.map((r) => [r.id, r])),
+    debtCategoryId,
+    collectionCategoryId,
+  };
 }

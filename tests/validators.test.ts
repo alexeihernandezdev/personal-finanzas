@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAmount, transactionSchema } from "@/lib/validators";
+import { importCommitSchema, normalizeAmount, transactionSchema } from "@/lib/validators";
 
 describe("normalizeAmount", () => {
   it.each([
@@ -35,5 +35,25 @@ describe("transactionSchema", () => {
     });
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.amount).toBe("100.00");
+  });
+});
+
+describe("importCommitSchema", () => {
+  const movement = {
+    kind: "movement",
+    type: "EXPENSE",
+    walletId: "w",
+    amount: "10",
+    date: "2026-11-10",
+    description: "",
+    categoryId: null,
+    businessId: null,
+  };
+  it("acepta un gasto que paga una deuda", () => {
+    expect(importCommitSchema.safeParse({ pockets: true, items: [{ ...movement, debtId: "d1" }] }).success).toBe(true);
+  });
+  it("rechaza un ingreso que paga una deuda o un gasto que cobra", () => {
+    expect(importCommitSchema.safeParse({ pockets: true, items: [{ ...movement, type: "INCOME", debtId: "d1" }] }).success).toBe(false);
+    expect(importCommitSchema.safeParse({ pockets: true, items: [{ ...movement, receivableId: "r1" }] }).success).toBe(false);
   });
 });

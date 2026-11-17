@@ -20,6 +20,8 @@ const base: ReviewRow = {
   reference: null,
   categoryId: "",
   businessId: "",
+  debtId: "",
+  receivableId: "",
   counterWalletId: "",
   counterAmount: "",
 };
@@ -60,5 +62,23 @@ describe("buildCommit", () => {
 
   it("omite las filas excluidas", () => {
     expect(buildCommit([r({ key: "a", include: false })], [], wallets, true).payload.items).toEqual([]);
+  });
+
+  it("asocia gastos a deudas e ingresos a cobros, sin pasarse de lo que falta", () => {
+    const debts = [{ id: "d1", name: "Ana", loan: false, currencyCode: "USD", remaining: "30" }];
+    const rows = [
+      r({ key: "a", amount: "20", debtId: "d1", categoryId: "c9" }),
+      r({ key: "b", type: "INCOME", amount: "5", receivableId: "r1" }),
+      // Un ingreso no puede pagar una deuda: el enlace se ignora
+      r({ key: "c", type: "INCOME", amount: "1", debtId: "d1" }),
+    ];
+    const { payload, problems } = buildCommit(rows, [], wallets, true, debts);
+    expect(problems).toEqual([]);
+    expect(payload.items[0]).toMatchObject({ debtId: "d1", receivableId: null });
+    expect(payload.items[1]).toMatchObject({ debtId: null, receivableId: "r1" });
+    expect(payload.items[2]).toMatchObject({ debtId: null, receivableId: null });
+
+    const over = buildCommit([...rows, r({ key: "d", amount: "15", debtId: "d1" })], [], wallets, true, debts);
+    expect(over.problems).toEqual(["Ana: solo faltan 30 USD"]);
   });
 });

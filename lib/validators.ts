@@ -303,7 +303,12 @@ export const importCommitSchema = z.object({
           description: z.string().max(200),
           categoryId: z.string().nullable(),
           businessId: z.string().nullable(),
-        }),
+          // Pago de una deuda (solo gastos) o cobro de algo que te deben (solo ingresos)
+          debtId: z.string().nullable().optional(),
+          receivableId: z.string().nullable().optional(),
+        })
+          .refine((m) => !m.debtId || m.type === "EXPENSE", { message: "Solo un gasto puede ser el pago de una deuda" })
+          .refine((m) => !m.receivableId || m.type === "INCOME", { message: "Solo un ingreso puede ser un cobro" }),
         z.object({
           kind: z.literal("transfer"),
           fromWalletId: z.string().min(1),
