@@ -284,3 +284,40 @@ export const pocketTransferSchema = z
     path: ["value"],
   })
   .refine((d) => d.fromPocketId !== d.toPocketId, { message: "Elige otro apartado", path: ["toPocketId"] });
+
+// Importación desde capturas: lo que se confirma en la pantalla de revisión
+const positiveAmount = z.string().regex(/^\d+(\.\d+)?$/, "Monto inválido").refine((v) => Number(v) > 0, "Monto inválido");
+
+export const importCommitSchema = z.object({
+  // Llevar ingresos y gastos a la Caja de su dueño y repartir los ingresos (como el formulario)
+  pockets: z.boolean(),
+  items: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("movement"),
+          type: z.enum(["INCOME", "EXPENSE"]),
+          walletId: z.string().min(1),
+          amount: positiveAmount,
+          date: isoDate,
+          description: z.string().max(200),
+          categoryId: z.string().nullable(),
+          businessId: z.string().nullable(),
+        }),
+        z.object({
+          kind: z.literal("transfer"),
+          fromWalletId: z.string().min(1),
+          toWalletId: z.string().min(1),
+          amountOut: positiveAmount,
+          amountIn: positiveAmount,
+          fee: z.string().regex(/^\d+(\.\d+)?$/),
+          date: isoDate,
+          description: z.string().max(200),
+        }),
+      ]),
+    )
+    .min(1, "No hay movimientos para guardar")
+    .max(300, "Máximo 300 movimientos por importación"),
+});
+
+export type ImportCommit = z.infer<typeof importCommitSchema>;

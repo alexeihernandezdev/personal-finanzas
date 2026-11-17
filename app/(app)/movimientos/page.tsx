@@ -1,11 +1,14 @@
 import { Suspense } from "react";
 import { PageSkeleton } from "@/components/page-skeleton";
 import Link from "next/link";
+import { BulkCategorize } from "@/components/bulk-categorize";
 import { TransactionList } from "@/components/transaction-list";
-import { ChevronDown, Search, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, Search, SlidersHorizontal, Upload } from "lucide-react";
 import { buttonClass, Field, Input, PageHeader, Select } from "@/components/ui";
 import { requireUser } from "@/lib/dal";
-import { getBusinesses, getCategories, getWalletsWithBalance, listTransactions } from "@/lib/queries";
+import { formatMoney } from "@/lib/money";
+import { getBusinesses, getCategories, getWalletsWithBalance, listTransactions, UNCATEGORIZED } from "@/lib/queries";
+import { toISODate } from "@/lib/utils";
 
 async function MovimientosPageContent({ searchParams }: PageProps<"/movimientos">) {
   const sp = await searchParams;
@@ -37,9 +40,15 @@ async function MovimientosPageContent({ searchParams }: PageProps<"/movimientos"
         title="Movimientos"
         description="Ingresos, gastos, transferencias y préstamos"
         actions={
-          <Link href="/movimientos/nuevo" className={buttonClass()}>
-            Nuevo movimiento
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/movimientos/importar" className={buttonClass("secondary")}>
+              <Upload className="size-4" />
+              Importar
+            </Link>
+            <Link href="/movimientos/nuevo" className={buttonClass()}>
+              Nuevo movimiento
+            </Link>
+          </div>
         }
       />
       <form className="mb-4 flex flex-col gap-3">
@@ -79,6 +88,7 @@ async function MovimientosPageContent({ searchParams }: PageProps<"/movimientos"
             </Select>
             <Select name="categoria" defaultValue={filters.categoryId ?? ""} aria-label="Categoría">
               <option value="">Todas las categorías</option>
+              <option value={UNCATEGORIZED}>Sin categoría</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.kind === "INCOME" ? "↑" : "↓"} {c.name}
@@ -113,7 +123,21 @@ async function MovimientosPageContent({ searchParams }: PageProps<"/movimientos"
           </div>
         </details>
       </form>
-      <TransactionList transactions={transactions} />
+      {filters.categoryId === UNCATEGORIZED ? (
+        <BulkCategorize
+          rows={transactions.map((t) => ({
+            id: t.id,
+            type: t.type as "INCOME" | "EXPENSE",
+            date: toISODate(t.date),
+            description: t.description,
+            wallet: t.wallet.name,
+            amount: formatMoney(t.amount, t.wallet.currencyCode, { sign: false }),
+          }))}
+          categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
+        />
+      ) : (
+        <TransactionList transactions={transactions} />
+      )}
       {transactions.length === 200 && (
         <p className="mt-2 text-center text-xs text-muted">Se muestran los 200 más recientes. Usa los filtros para acotar.</p>
       )}

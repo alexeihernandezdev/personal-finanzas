@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireUser } from "@/lib/dal";
@@ -8,7 +7,7 @@ import { fail, formObject, zodError, type ActionState } from "@/lib/action";
 import { getFeeCategoryId } from "@/lib/defaults";
 import { rateForDate } from "@/lib/guards";
 import { dec } from "@/lib/money";
-import { parseISODate } from "@/lib/utils";
+import { impliedRate, insertTransfer } from "@/lib/transactions";
 import { normalizeAmount, transferSchema } from "@/lib/validators";
 
 export async function createTransfer(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -36,48 +35,19 @@ export async function createTransfer(_prev: ActionState, formData: FormData): Pr
   const fee = dec(data.fee);
   if (fee.isNegative()) return fail("La comisión no puede ser negativa");
 
-  const groupId = randomUUID();
-  const date = parseISODate(data.date);
   // Entre bolívares y dólares la tasa es la que se aplicó de verdad; si no, la del día de la transferencia
   const rate = impliedRate(from.currencyCode, data.amountOut, to.currencyCode, amountIn) ?? (await rateForDate(user.preferredRateSource, data.date));
-  const description = data.description ?? `${from.name} → ${to.name}`;
   const feeCategoryId = fee.gt(0) ? await getFeeCategoryId(user.id) : null;
 
-  await prisma.$transaction(async (tx) => {
-    await tx.transaction.createMany({
-      data: [
-        { userId: user.id, walletId: from.id, type: "TRANSFER_OUT", amount: data.amountOut, date, description, transferGroupId: groupId, ...rate },
-        { userId: user.id, walletId: to.id, type: "TRANSFER_IN", amount: amountIn, date, description, transferGroupId: groupId, ...rate },
-      ],
-    });
-    if (fee.gt(0)) {
-      await tx.transaction.create({
-        data: {
-          userId: user.id,
-          walletId: from.id,
-          type: "EXPENSE",
-          amount: fee.toString(),
-          date,
-          description: `Comisión: ${description}`,
-          categoryId: feeCategoryId,
-          // Parte de la transferencia: se borra con ella
-          transferGroupId: groupId,
-          ...rate,
-        },
-      });
-    }
-  });
+  await prisma.$transaction((tx) =>
+    insertTransfer(
+      tx,
+      user.id,
+      { from, to, amountOut: data.amountOut, amountIn, fee: fee.toString(), date: data.date, description: data.description, feeCategoryId },
+      rate,
+    ),
+  );
 
   revalidatePath("/", "layout");
   return { ok: true, message: "Transferencia registrada" };
-}
-
-const USD_LIKE = ["USD", "USDT"];
-
-/** Tasa VES por USD implícita en una transferencia entre bolívares y dólares; null si no aplica. */
-function impliedRate(fromCurrency: string, amountOut: string, toCurrency: string, amountIn: string) {
-  const ves = fromCurrency === "VES" ? amountOut : toCurrency === "VES" ? amountIn : null;
-  const usd = USD_LIKE.includes(fromCurrency) ? amountOut : USD_LIKE.includes(toCurrency) ? amountIn : null;
-  if (!ves || !usd || dec(usd).isZero()) return null;
-  return { rateVesPerUsd: dec(ves).div(dec(usd)).toDecimalPlaces(8).toString(), rateSource: null };
 }

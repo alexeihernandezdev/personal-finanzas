@@ -10,6 +10,7 @@ import { recomputeDebtStatus } from "@/lib/debts";
 import { applyTransactionToPockets, pocketFailure, revertTransactionPockets } from "@/lib/pockets";
 import { recomputeReceivableStatus } from "@/lib/receivables";
 import { parseISODate, toISODate } from "@/lib/utils";
+import { insertTransaction } from "@/lib/transactions";
 import { transactionSchema } from "@/lib/validators";
 
 function parseTransactionForm(formData: FormData) {
@@ -91,22 +92,7 @@ export async function createTransaction(_prev: ActionState, formData: FormData):
   const rate = await rateForDate(user.preferredRateSource, data.date);
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const created = await tx.transaction.create({
-        data: {
-          userId: user.id,
-          walletId: data.walletId,
-          type: data.type,
-          amount: data.amount,
-          date: parseISODate(data.date),
-          categoryId: data.categoryId ?? null,
-          description: data.description ?? "",
-          businessId: data.businessId ?? null,
-          ...rate,
-        },
-      });
-      await moveToPockets(tx, user, created.id, data, rate.rateVesPerUsd);
-    });
+    await prisma.$transaction((tx) => insertTransaction(tx, user, data, rate));
   } catch (e) {
     return pocketFailure(e);
   }
@@ -178,4 +164,24 @@ export async function deleteTransaction(id: string) {
     if (tx.debtId) await recomputeDebtStatus(tx.debtId, db);
   });
   revalidatePath("/", "layout");
+}
+
+/** Pone una categoría a varios ingresos o gastos a la vez (solo a los del mismo tipo que la categoría). */
+export async function bulkCategorize(ids: string[], categoryId: string): Promise<ActionState> {
+  const user = await requireUser();
+  if (!Array.isArray(ids) || !ids.length || ids.length > 500 || typeof categoryId !== "string") return fail("Elige movimientos");
+  const category = await prisma.category.findFirst({ where: { id: categoryId, userId: user.id } });
+  if (!category) return fail("Categoría no encontrada");
+  const { count } = await prisma.transaction.updateMany({
+    where: { userId: user.id, id: { in: ids.filter((v) => typeof v === "string") }, type: category.kind },
+    data: { categoryId: category.id },
+  });
+  revalidatePath("/", "layout");
+  const skipped = ids.length - count;
+  return {
+    ok: true,
+    message: `${count} ${count === 1 ? "movimiento categorizado" : "movimientos categorizados"}${
+      skipped ? ` · ${skipped} no son ${category.kind === "INCOME" ? "ingresos" : "gastos"}` : ""
+    }`,
+  };
 }

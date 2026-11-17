@@ -156,6 +156,9 @@ export function getBusinesses(userId: string, opts: { includeArchived?: boolean 
   });
 }
 
+/** Valor del filtro de categoría para ver los ingresos y gastos sin categoría. */
+export const UNCATEGORIZED = "sin";
+
 export type TransactionFilters = {
   walletId?: string;
   categoryId?: string;
@@ -178,8 +181,14 @@ export const transactionInclude = {
 export async function listTransactions(userId: string, filters: TransactionFilters = {}, take = 200) {
   const where: Prisma.TransactionWhereInput = { userId };
   if (filters.walletId) where.walletId = filters.walletId;
-  if (filters.categoryId) where.categoryId = filters.categoryId;
-  if (filters.type) {
+  if (filters.categoryId === UNCATEGORIZED) {
+    // Ingresos y gastos sin categoría (lo importado queda así hasta categorizarlo)
+    where.categoryId = null;
+    where.type = { in: ["INCOME", "EXPENSE"] };
+  } else if (filters.categoryId) where.categoryId = filters.categoryId;
+  if (filters.type && filters.categoryId === UNCATEGORIZED) {
+    if (filters.type === "INCOME" || filters.type === "EXPENSE") where.type = filters.type;
+  } else if (filters.type) {
     where.type =
       filters.type === "TRANSFER"
         ? { in: ["TRANSFER_IN", "TRANSFER_OUT"] }
